@@ -147,3 +147,9 @@ Depois da validação, compilar incrementalmente e continuar investigação dos 
 A inspeção local de `out/build/generated_spu/inventory.json` mostrou `diagnostics.unsupported = {".word": 213}`. O C recompilado contém instruções não decodificadas a partir de `0xB2A4`; os primeiros exemplos incluem `0x65646765` (ASCII `edge`) e `0x7A6C6962` (`zlib`). Isso é **evidência de possível região de dados/strings indevidamente decodificada como código**, não prova de 213 opcodes SPU ausentes. O `spu_lifter.py` upstream suporta `--code-end`, mas o pipeline automatizado `build_spu_workloads --input` não repassa hoje esse limite; se for confirmado um limite seguro, será necessário ajustar a detecção/geração mantendo `code_ranges`, entradas, alvos e sua validação. Não substituir `.word` por NOPs.
 
 **Próximo dado:** obter menor/maior endereço de `spu_unsupported`, quantidade antes de `0xB2A4` e limites finais das funções detectadas. Nenhum ELF ou .bin deve ser enviado ao repositório.
+
+## Dados de limite de código SPU (inspeção local)
+
+O lifter reportou **213 instruções não suportadas, todas `.word`**. Os endereços variam de **0xB2A4** até **0xC20C**; **0 ocorrências antes de 0xB2A4**. Há falsas entradas candidatas até `0xC244`, por exemplo `0xC1F0..0xC22C`. Várias palavras contêm texto legível (`edge`, `zlib`), sugerindo que a área foi erroneamente disassemblada como instruções.
+
+**Hipótese forte:** sufixo de dados/strings dentro da região PF_X do SPU ELF. O `spu_lifter.py` possui `--code-end`, mas o pipeline `build_spu_workloads.py --input` ainda não oferece parâmetro para repassá-lo. **Não usar automaticamente 0xB2A4 como corte** até conferir se alguma função legítima cruza a fronteira ou se existem alvos reais de chamadas/saltos posteriores. Validar esses dois pontos antes de modificar a geração, para evitar exclusão de código real. Nenhum código ou asset do jogo foi publicado.
