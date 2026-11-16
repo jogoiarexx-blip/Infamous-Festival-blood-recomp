@@ -61,4 +61,4 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [ ] Testes em máquinas Windows diferentes.
 
 ## Próximo checkpoint
-**Objetivo imediato:** ambiente Windows x64 confirmado (CMake, Ninja, clang-cl, VS 2022). Próximo passo: [configurar o template local via CMake](BUILD_WINDOWS_NPUA80657.md), então tentar compilar, registrar falhas e investigar SPU/HLE. Três avisos de continuação em `0x0096FF68` permanecem pendentes. Ainda não há executável jogável nem boot validado.
+**Objetivo imediato:** CMake configurado com sucesso no Windows (Clang 23.1.5, ps3recomp v0.19.0, 33 arquivos C++, tabela HLE localizada, `PORT_ENABLE_SPU=OFF`). Próximo passo: executar `cmake --build "out\\build" --parallel 1` no Developer Command Prompt, registrar erros de compilação e investigar SPU/HLE. Três avisos de continuação em `0x0096FF68` permanecem pendentes. Ainda não há executável jogável nem boot validado.
