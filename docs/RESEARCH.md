@@ -11,7 +11,8 @@
 - **Festival of Blood / NPUA80657:** análise local de um EBOOT.BIN SELF/NPDRM com cabeçalho ELF64 PowerPC, sem decodificação dos segmentos. Ver [relatório da amostra](REPORT-NPUA80657.md).
 - O ps3recomp dispõe de loader e lifter para PPU e de runtime com HLE para o ecossistema PlayStation 3.
 - A recompilação PPU trabalha sobre **ELF**; um contêiner retail SELF não equivale a um ELF pronto.
-- A implementação atual do repositório somente identifica cabeçalhos, calcula SHA-256 e gera inventário. Nenhum jogo foi testado.
+- Um arquivo **EBOOT.elf decodificado** da mesma edição foi recebido e analisado localmente: ELF64 big-endian PowerPC, entry OPD `0x9fee40`, código `0x10230`, TOC `0xa27440`. Foram contabilizados 16.578 descritores OPD válidos (14.789 endereços distintos) e 302 imports em 21 bibliotecas. [Relatório completo](ELF_ANALYSIS_NPUA80657.md).
+- Adicionado analisador PPU próprio e testes sintéticos. **Ainda não rodamos o loader/lifter oficial nem executamos o jogo.**
 
 ## Hipóteses a verificar
 - Festival of Blood pode compartilhar partes de tecnologia com inFAMOUS 2; **isso não confirma compatibilidade de código ou assets**.
