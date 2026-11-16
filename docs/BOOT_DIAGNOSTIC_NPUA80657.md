@@ -243,3 +243,19 @@ Resultado do segundo boot `out/boot_spu.log`, extraído pelo usuário:
 **Próxima prioridade:** inventariar **somente nomes e caminhos** dos arquivos originais presentes em `private/` (especialmente `PARAM.SFO`, `ne.bv`, `infamous1.psarc_s`, `infamous2.psarc_s` e `all_shaders.xpps`). Distinguir arquivo inexistente de arquivo presente sob raiz VFS errada, antes de qualquer mudança no mapper; checar `PS3_VFS_ROOT` conforme os caminhos no log. Depois, tratar o módulo SPURS policy raw por fluxo separado, sem tratá-lo como ELF ou jobmod com `C0DEC0DE`.
 
 **Não publicar** arquivos do jogo, code dump SPU, executável ou fontes geradas.
+
+## Diagnóstico filesystem (16/11/2026) — cinco arquivos ausentes em `private/`
+
+O usuário executou uma busca recursiva **no diretório local `private/`** e reportou:
+
+```text
+PARAM.SFO: NAO ENCONTRADO
+ne.bv: NAO ENCONTRADO
+infamous1.psarc_s: NAO ENCONTRADO
+infamous2.psarc_s: NAO ENCONTRADO
+all_shaders.xpps: NAO ENCONTRADO
+```
+
+Isso comprova **ausência desses nomes sob `private/`**, não ausência na máquina inteira ou incompatibilidade de formato. O runtime traduziu os caminhos `/dev_bdvd/...` para `private/PS3_GAME/...` e `/dev_hdd0/...` para `private/game/...`; portanto trocar só o código SPU não poderá suprir recursos ausentes. A edição digital foi identificada como `NPUA80657`, mas o `BootCheck` ainda usa `BLES00000`; `PARAM.SFO` faltante pode ser relacionado, sem prova definitiva.
+
+**Próxima ação:** procurar os recursos e a estrutura de instalação da cópia legítima em outra pasta da máquina, apenas listando nomes e caminhos, e definir `PS3_VFS_ROOT` / `PS3_HDD0_ROOT` conforme a disposição real em disco. Não criar arquivos vazios com os nomes ausentes, não baixar arquivos de terceiros e não commitar assets. A investigação do SPURS policy raw segue independente. Sem uma cópia íntegra, não é possível validar o menu.
