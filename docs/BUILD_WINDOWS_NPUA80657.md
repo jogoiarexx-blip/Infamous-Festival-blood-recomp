@@ -38,13 +38,15 @@ cmake -S "out\port" -B "out\build" -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_
   ```
 - Em caso de erro sobre `ppu_recomp.h`, verificar `dir out\recompiled\ppu_recomp.h`.
 
-## Passo 3 — primeira tentativa de compilação (somente após configurar)
+## Passo 3 — primeira tentativa de compilação (configuração confirmada como concluída)
+
+A execução local do CMake exibiu `Configuring done` / `Generating done` e detectou `ps3recomp runtime v0.19.0` e `33` fontes recompiladas. O modo de build foi `Debug`. **Compilação ainda não executada/verificada**.
 
 ```bat
 cmake --build "out\build" --parallel 2
 ```
 
-**Atenção:** são arquivos C++ gigantes (centenas de milhares de linhas); a compilação pode consumir muita RAM, disco e CPU. `--parallel 2` reduz pressão de memória comparado a uma paralelização irrestrita. Caso haja esgotamento de RAM, tentar `--parallel 1` depois de examinar a falha.
+**Atenção:** são arquivos C++ gigantes (centenas de milhares de linhas); a compilação pode consumir muita RAM, disco e CPU. `--parallel 1` reduz a pressão de memória em relação à compilação paralela. Caso haja falha, registrar as primeiras linhas de erro e o resumo do compilador.
 
 O alvo do template chama-se `MyGameRecomp`; isso é **temporário**. Mesmo se o linker produzir um executável, o boot de Festival of Blood não estará validado até executarmos e corrigirmos HLE, SPU, sistemas de arquivos, gráficos e incompatibilidades. Não distribuir um executável derivado dos arquivos de jogo.
 
