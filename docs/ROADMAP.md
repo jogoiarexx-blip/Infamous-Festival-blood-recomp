@@ -26,7 +26,8 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [ ] Preparar ambiente Windows: Python, CMake, Ninja, clang-cl e SDK ps3recomp.
 - [x] Executar loader oficial no ELF do proprietário: 16.578 OPD, 14.789 funções, 302 imports/21 bibliotecas (log verificado em 2026-11-16).
 - [x] Executar lifter PPU com `--functions` e `--hle-stubs`: 40.085 entradas traduzidas, 12.848 wrappers e 32 arquivos C++ gerados localmente. **Três avisos de continuação pendentes**; ver [relatório](PPU_LIFT_RESULT_NPUA80657.md).
-- [ ] Gerar mapeamento HLE, identificar funções de sistema faltantes.
+- [x] Gerar tabela HLE: `ppu_hle_nids.cpp`, 1.238 handlers de 93 módulos (execução local confirmada em 2026-11-16).
+- [ ] Comparar os 302 imports do jogo com os handlers disponíveis e verificar eventuais funções HLE faltantes.
 - [ ] Descobrir e tratar trabalho SPU de modo incremental.
 - [ ] Criar compilação local determinística e smoke test sem assets distribuídos.
 
@@ -60,4 +61,4 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [ ] Testes em máquinas Windows diferentes.
 
 ## Próximo checkpoint
-**Objetivo imediato:** o lifter PPU **concluiu a geração** de 40.085 entradas em 32 arquivos C++ no computador do proprietário. Próximo passo: gerar tabela HLE, verificar compiladores Windows, configurar e tentar compilar localmente; investigar três avisos de continuação em `0x0096FF68`. Ainda não há executável jogável nem boot validado.
+**Objetivo imediato:** geração PPU concluída (40.085 entradas em 32 arquivos C++) e tabela HLE gerada localmente (1.238 handlers de 93 módulos). Próximo passo: verificar `cmake`, `ninja`, `clang-cl` e MSVC Build Tools no Windows; preparar o template do projeto para compilar. A cobertura real das 302 importações e três avisos de continuação em `0x0096FF68` permanecem pendentes. Ainda não há executável jogável nem boot validado.
