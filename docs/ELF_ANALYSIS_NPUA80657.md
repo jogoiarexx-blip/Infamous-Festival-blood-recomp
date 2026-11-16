@@ -10,22 +10,22 @@
 | Arquivo | EBOOT.elf |
 | Formato | ELF64, big-endian, PowerPC64, ET_EXEC |
 | Tamanho | 10.927.304 bytes |
-| SHA-256 | \`184343936c98aa95321cca2202f827f2c78aa373f8ba7ff76b43a255ee155f51\` |
-| Entry OPD | \`0x9fee40\` |
-| Entry real código | \`0x10230\` |
-| Entry TOC (r2) | \`0xa27440\` |
+| SHA-256 | `184343936c98aa95321cca2202f827f2c78aa373f8ba7ff76b43a255ee155f51` |
+| Entry OPD | `0x9fee40` |
+| Entry real código | `0x10230` |
+| Entry TOC (r2) | `0xa27440` |
 | Program headers | 8 |
 | PT_LOAD não vazios | 2 |
 | Segmentos executáveis | 1 |
 | Section headers | 40 |
-| Seção contendo entry/OPD | índice 22, início \`0x9fee30\`, tamanho 132.624 bytes |
+| Seção contendo entry/OPD | índice 22, início `0x9fee30`, tamanho 132.624 bytes |
 | Descritores OPD que apontam para código | 16.578 |
 | Endereços únicos via OPD | 14.789 |
-| TOC predominante | \`0xa27440\` |
+| TOC predominante | `0xa27440` |
 | Bibliotecas importadas | 21 |
 | Importações de funções | 302 |
 
-**Nota de qualidade:** os nomes das seções ELF não estão disponíveis (a string table de nomes está zerada). A seção de descritores foi identificada pelo endereço da entrada e verificação de pares \`(func, toc)\`, como orienta o loader do ps3recomp. **14.789 são endereços distintos encontrados na OPD, não total definitivo de funções**; funções sem descritor podem existir.
+**Nota de qualidade:** os nomes das seções ELF não estão disponíveis (a string table de nomes está zerada). A seção de descritores foi identificada pelo endereço da entrada e verificação de pares `(func, toc)`, como orienta o loader do ps3recomp. **14.789 são endereços distintos encontrados na OPD, não total definitivo de funções**; funções sem descritor podem existir.
 
 ## Contagem por biblioteca
 
@@ -59,15 +59,15 @@ Todos os endereços de tabelas de NID e stubs destas importações apontam para 
 
 Execute (com sua cópia do jogo, **não** suba o ELF ao GitHub):
 
-\`\`\`powershell
+```powershell
 py tools/analyze_ppu.py "private/game/EBOOT.elf" --output "out/ppu-summary.json"
-\`\`\`
+```
 
 Validação futura com o [ps3recomp](https://github.com/sp00nznet/ps3recomp):
 
-\`\`\`powershell
+```powershell
 py ps3recomp/tools/ppu_loader.py "private/game/EBOOT.elf" --output "out/loader"
-\`\`\`
+```
 
 O segundo comando exige uma instalação local do ps3recomp. **Não foi executado neste checkpoint**, portanto não foi validado neste jogo ainda.
 
