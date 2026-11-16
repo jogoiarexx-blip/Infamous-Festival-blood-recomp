@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import struct
 from typing import Any
@@ -20,6 +21,79 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def inspect_sce(path: Path, size: int) -> dict[str, Any]:
+    """Lê apenas cabeçalhos públicos de SELF/SCE, sem abrir o payload protegido."""
+    with path.open("rb") as stream:
+        fixed = stream.read(112)
+        if len(fixed) < 32:
+            return {"status": "Cabeçalho SCE incompleto."}
+        magic, version, flags, category, meta_offset, header_size, elf_size = (
+            struct.unpack_from(">4sIHHIQQ", fixed)
+        )
+        result: dict[str, Any] = {
+            "sce_version": version,
+            "sce_flags": flags,
+            "sce_category": category,
+            "metadata_offset": meta_offset,
+            "self_header_size": header_size,
+            "elf_size_declared": elf_size,
+            "note": "Cabeçalho ELF interno não significa que os segmentos de código estejam decodificados.",
+        }
+        if len(fixed) < 112:
+            result["status"] = "SELF/SCE com cabeçalho estendido incompleto."
+            return result
+        if header_size < 112 or header_size > size:
+            result["status"] = "Tamanho do cabeçalho SCE inválido; demais metadados não analisados."
+            return result
+
+        fields = struct.unpack_from(">10Q", fixed, 32)
+        app_off, elf_off = fields[1], fields[2]
+        result["embedded_elf_offset"] = elf_off
+        stream.seek(0)
+        metadata = stream.read(min(header_size, 1024 * 1024))
+
+    if app_off + 16 <= len(metadata):
+        self_type = struct.unpack_from(">I", metadata, app_off + 12)[0]
+        result["self_type"] = self_type
+        result["is_npdrm"] = self_type == 8
+
+    # IDs de conteúdo são informações públicas do título, não chaves de licença.
+    match = re.search(
+        rb"(?<![A-Z0-9])[A-Z]{2}[0-9]{4}-([A-Z]{4}[0-9]{5})_[0-9]{2}-[A-Z0-9]{16}(?![A-Z0-9])",
+        metadata,
+    )
+    if match:
+        result["title_id"] = match.group(1).decode("ascii")
+        result["content_id"] = match.group(0).decode("ascii")
+
+    if elf_off + 64 <= len(metadata) and metadata[elf_off:elf_off + 4] == b"\\x7fELF":
+        identification = metadata[elf_off:elf_off + 16]
+        bits = {1: 32, 2: 64}.get(identification[4])
+        order = {1: ("little", "<"), 2: ("big", ">")}.get(identification[5])
+        if bits is not None and order is not None:
+            byte_order, endian = order
+            fmt = "HHIIIIIHHHHHH" if bits == 32 else "HHIQQQIHHHHHH"
+            needed = 16 + struct.calcsize(endian + fmt)
+            if elf_off + needed <= len(metadata):
+                values = struct.unpack_from(endian + fmt, metadata, elf_off + 16)
+                result["embedded_elf"] = {
+                    "header_only": True,
+                    "class_bits": bits,
+                    "byte_order": byte_order,
+                    "machine": values[1],
+                    "machine_name": "PowerPC64" if values[1] == 21 else "other",
+                    "entry_point": f"0x{values[3]:x}",
+                    "program_header_count": values[9],
+                    "section_header_count": values[11],
+                    "ppu_candidate": bits == 64 and byte_order == "big" and values[1] == 21,
+                }
+    result["status"] = (
+        "SELF/SCE detectado. Metadados analisados sem descriptografia; "
+        "o ps3recomp necessita de um ELF com segmentos acessíveis."
+    )
+    return result
 
 
 def inspect_binary(path: Path) -> dict[str, Any]:
@@ -35,11 +109,8 @@ def inspect_binary(path: Path) -> dict[str, Any]:
         "sha256": sha256_file(path),
     }
     if header.startswith(b"SCE\x00"):
-        report.update({
-            "format": "SELF/SCE",
-            "status": "contêiner SCE detectado (não é um ELF pronto para análise PPU)",
-            "note": "Esta ferramenta não descriptografa nem extrai o contêiner.",
-        })
+        report["format"] = "SELF/SCE"
+        report.update(inspect_sce(path, size))
         return report
 
     if not header.startswith(b"\x7fELF"):
