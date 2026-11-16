@@ -29,7 +29,8 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [x] Gerar tabela HLE: `ppu_hle_nids.cpp`, 1.238 handlers de 93 módulos (execução local confirmada em 2026-11-16).
 - [ ] Comparar os 302 imports do jogo com os handlers disponíveis e verificar eventuais funções HLE faltantes.
 - [ ] Descobrir e tratar trabalho SPU de modo incremental.
-- [ ] Criar compilação local determinística e smoke test sem assets distribuídos.
+- [x] Configuração CMake e compilação/link inicial em Windows sem erro fatal relatado: `[200/201] Linking CXX executable MyGameRecomp.exe`; prompt retornou (448 avisos). **Presença física do .exe ainda precisa de confirmação.**
+- [ ] Executar smoke test de boot local e registrar logs sem assets distribuídos.
 
 **Gate:** executável local inicia pipeline de runtime com logs; não implica jogo rodando.
 
@@ -61,4 +62,4 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [ ] Testes em máquinas Windows diferentes.
 
 ## Próximo checkpoint
-**Objetivo imediato:** CMake configurado com sucesso no Windows (Clang 23.1.5, ps3recomp v0.19.0, 33 arquivos C++, tabela HLE localizada, `PORT_ENABLE_SPU=OFF`). Próximo passo: executar `cmake --build "out\\build" --parallel 1` no Developer Command Prompt, registrar erros de compilação e investigar SPU/HLE. Três avisos de continuação em `0x0096FF68` permanecem pendentes. Ainda não há executável jogável nem boot validado.
+**Objetivo imediato:** configuração CMake e compilação/link C++ inicial aparentemente concluídos; o prompt retornou após `[200/201] Linking CXX executable MyGameRecomp.exe`, sem erro fatal. Verificar se `out\\build\\MyGameRecomp.exe` existe e testar boot local com o próprio `private\\game\\EBOOT.elf`; coletar logs para corrigir runtime, HLE/SPU e arquivos. Três avisos de continuação em `0x0096FF68` permanecem pendentes. Jogo não está validado como jogável.
