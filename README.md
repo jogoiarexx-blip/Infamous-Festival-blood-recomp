@@ -1,6 +1,6 @@
 # inFAMOUS: Festival of Blood — recompilação para PC
 
-> **Estado: fase 0 — pesquisa e ferramentas. Não jogável.**
+> **Estado: fase 0 concluída, identificação NPUA80657; fase 1 bloqueada aguardando ELF local com segmentos acessíveis. Não jogável.**
 
 Projeto comunitário e não oficial para estudar a viabilidade de uma recompilação estática de **inFAMOUS: Festival of Blood** (PlayStation 3) para PC, com base no ecossistema [ps3recomp](https://github.com/sp00nznet/ps3recomp).
 
@@ -8,7 +8,7 @@ Projeto comunitário e não oficial para estudar a viabilidade de uma recompila�
 
 ## O que já existe
 
-- Ferramenta de identificação e inspeção **local** de cabeçalhos ELF/SELF, com hash SHA-256.
+- Ferramenta de identificação e inspeção **local** de cabeçalhos ELF/SELF, com hash SHA-256, Title ID NPDRM e metadados do ELF embutido.
 - Inventário local de arquivos por tamanho e hash (opcional; não publica arquivos).
 - Testes unitários e CI sem conteúdo do jogo.
 - Plano de investigação com critérios de validação.
@@ -32,7 +32,9 @@ py tools/inspect_ps3_binary.py inventory "private/game" --output "out/inventory.
 py -m unittest discover -s tests -v
 ```
 
-Se você só tiver um `EBOOT.BIN` no formato SELF, o script informará isso. Não renomeie SELF para ELF: isso não o converte.
+Se você só tiver um `EBOOT.BIN` no formato SELF, o script mostrará a identificação NPDRM e os metadados do cabeçalho ELF embutido. **Ele não extrai nem descriptografa o programa.** Não renomeie SELF para ELF: isso não o converte.
+
+**Primeiro resultado real:** [relatório do EBOOT NPUA80657](docs/REPORT-NPUA80657.md), identificado como inFAMOUS: Festival of Blood (edição PSN americana).
 
 > **Privacidade:** relatórios de inventário contêm nomes, tamanhos e hashes dos arquivos. Revise antes de compartilhá-los; não envie os próprios arquivos do jogo.
 
