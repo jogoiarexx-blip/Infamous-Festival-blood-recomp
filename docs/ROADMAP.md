@@ -2,7 +2,7 @@
 
 Este documento registra **resultados verificáveis**, não porcentagens inventadas.
 
-## Fase 0 — Preparação da pesquisa (em andamento)
+## Fase 0 — Preparação da pesquisa (concluída)
 - [x] Criar repositório público independente.
 - [x] Criar documentação inicial, política de não distribuição e arquivos ignorados.
 - [x] Implementar inspeção local dos formatos ELF/SELF e SHA-256.
@@ -13,8 +13,8 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 **Gate:** registrar formato de EBOOT, identificador da edição quando disponível, versão e hash local de referência. Não publicar o EBOOT.
 
 ## Fase 1 — Análise de executável e compatibilidade
-- [ ] Validar um ELF PPU PowerPC64 big-endian do próprio jogo.
-- [ ] Identificar TOC, OPD, entry point, segmentos, bibliotecas importadas e símbolos disponíveis.
+- [x] Validar um ELF PPU PowerPC64 big-endian do próprio jogo (NPUA80657, SHA-256 registrado).
+- [x] Identificar TOC, OPD, entry point, segmentos e bibliotecas importadas; binário sem tabela de nomes de seções utilizável e sem símbolos de função conhecidos.
 - [ ] Confirmar ferramentas e versão exata de ps3recomp que suportam o binário.
 - [ ] Mapear módulos PRX e imagens SPU, quando presentes.
 - [ ] Comparar **arquitetura e interfaces**, não endereços assumidos, com inFAMOUS 2.
@@ -60,4 +60,4 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [ ] Testes em máquinas Windows diferentes.
 
 ## Próximo checkpoint
-**Objetivo imediato:** NPUA80657 identificado e documentado. Próximo bloqueio: obter localmente um ELF com segmentos decodificados para executar o loader ps3recomp. Não reutilizar endereços ou hashes de inFAMOUS 2 como se fossem Festival of Blood.
+**Objetivo imediato:** ELF de NPUA80657 confirmado, 16.578 descritores OPD válidos, 14.789 endereços distintos e 302 imports em 21 bibliotecas. Ver [relatório ELF](ELF_ANALYSIS_NPUA80657.md). Próximo bloqueio: validar esses resultados com o **loader oficial ps3recomp** e mapear funções adicionais/SPU. Não reutilizar endereços ou hashes de inFAMOUS 2.
