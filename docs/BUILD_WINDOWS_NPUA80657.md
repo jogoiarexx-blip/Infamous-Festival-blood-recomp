@@ -75,3 +75,39 @@ Se travar, fechar a janela gráfica ou usar `Ctrl+C` no prompt. Salvar os logs d
 ## Passo 5 — diagnóstico do primeiro boot (feito)
 
 A execução confirmou que o runner chega à inicialização SPURS/GCM e à leitura de recursos do jogo. Foram constatados `PM NOT LIFTED`, `async dispatch MISS`, falhas de abertura no VFS e saída `sys_process_exit(code=0)` antes do menu. Veja [diagnóstico e coleta local de dumps SPU](BOOT_DIAGNOSTIC_NPUA80657.md). Não copiar, commitar nem enviar dumps ou assets.
+
+## Passo 6 — integrar localmente o ELF SPU com limite validado (sem publicar assets)
+
+O diagnóstico SPU chegou a uma tradução experimental com `--code-end 0xB290`:
+
+```text
+[spu_lifter] code-end 0xB290: kept 621/661 bound(s)
+621 function(s) lifted
+UNSUPPORTED: {}
+MISSING_TARGETS: []
+ENTRADA_3050: True
+```
+
+Isto **não comprova execução real correta**: a delimitação decorre de indícios fortes de strings/dados identificados erroneamente como instruções. Ainda faltam testes de execução e o policy module SPURS raw.
+
+Para evitar alterar o toolkit `../ps3recomp`, o repositório oferece `tools/prepare_spu_elf.py`, que **só trabalha nos dados locais** em `out/`, confere SHA-256, fingerprint e entrada do SPU, gera C com `--code-end`, valida as referências diretas e cria o registro pelo gerador oficial em modo `--skip-lift`.
+
+Se a pasta local foi obtida por download ZIP (sem Git), na raiz do projeto, execute no CMD:
+
+```bat
+curl.exe -fL "https://raw.githubusercontent.com/jogoiarexx-blip/Infamous-Festival-blood-recomp/main/tools/prepare_spu_elf.py" -o "tools\prepare_spu_elf.py"
+py "tools\prepare_spu_elf.py"
+```
+
+O script escreve somente em `out/port/spu` (ignorado pelo Git), não em `../ps3recomp`, preserva pastas existentes não gerenciadas e impede sobrescrever backup de tentativas anteriores. Seu resultado esperado é `SUCESSO: SPU ELF preparado e registrado localmente.`
+
+Somente após a preparação validar:
+
+```bat
+cmake -S "out\port" -B "out\build" -DPORT_ENABLE_SPU=ON "-DPORT_SPU_INPUTS:STRING="
+cmake --build "out\build" --parallel 1
+```
+
+`PORT_SPU_INPUTS` precisa estar vazio para o template procurar as fontes SPU locais em `out/port/spu` em vez de tentar refazer o pipeline anterior (que falha por causa da região de dados). **Esta estratégia registra apenas o ELF SPU**, não o policy module raw `B3523C4B17650EF8`, e não resolve os assets PSARC e `all_shaders.xpps` ausentes.
+
+**Não publicar** `out/`, os `.bin`, `.elf`, fontes geradas, assets ou executável derivado do jogo.
