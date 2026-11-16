@@ -7,7 +7,7 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [x] Criar documentação inicial, política de não distribuição e arquivos ignorados.
 - [x] Implementar inspeção local dos formatos ELF/SELF e SHA-256.
 - [x] Implementar inventário de arquivos e testes sintéticos.
-- [ ] Confirmar o CI verde no GitHub Actions.
+- [x] Confirmar o CI verde no GitHub Actions (testes sintéticos aprovados em 2026-11-16).
 - [ ] Receber metadados **não proprietários** da edição de Festival of Blood obtida legalmente.
 
 **Gate:** registrar formato de EBOOT, identificador da edição quando disponível, versão e hash local de referência. Não publicar o EBOOT.
