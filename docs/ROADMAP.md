@@ -8,7 +8,7 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [x] Implementar inspeção local dos formatos ELF/SELF e SHA-256.
 - [x] Implementar inventário de arquivos e testes sintéticos.
 - [x] Confirmar o CI verde no GitHub Actions (testes sintéticos aprovados em 2026-11-16).
-- [ ] Receber metadados **não proprietários** da edição de Festival of Blood obtida legalmente.
+- [x] Receber metadados **não proprietários**: NPUA80657, SELF/NPDRM, cabeçalho ELF64 PowerPC; ver [relatório](REPORT-NPUA80657.md).
 
 **Gate:** registrar formato de EBOOT, identificador da edição quando disponível, versão e hash local de referência. Não publicar o EBOOT.
 
@@ -60,4 +60,4 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [ ] Testes em máquinas Windows diferentes.
 
 ## Próximo checkpoint
-**Objetivo imediato:** coletar o JSON de `inspect` (ou `SELF/SCE`) e um resumo do inventário; escolher uma edição alvo real. Não reutilizar endereços ou hashes de inFAMOUS 2 como se fossem Festival of Blood.
+**Objetivo imediato:** NPUA80657 identificado e documentado. Próximo bloqueio: obter localmente um ELF com segmentos decodificados para executar o loader ps3recomp. Não reutilizar endereços ou hashes de inFAMOUS 2 como se fossem Festival of Blood.
