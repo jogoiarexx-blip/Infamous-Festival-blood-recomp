@@ -1,0 +1,63 @@
+# ROADMAP — Festival of Blood Recomp
+
+Este documento registra **resultados verificáveis**, não porcentagens inventadas.
+
+## Fase 0 — Preparação da pesquisa (em andamento)
+- [x] Criar repositório público independente.
+- [x] Criar documentação inicial, política de não distribuição e arquivos ignorados.
+- [x] Implementar inspeção local dos formatos ELF/SELF e SHA-256.
+- [x] Implementar inventário de arquivos e testes sintéticos.
+- [ ] Confirmar o CI verde no GitHub Actions.
+- [ ] Receber metadados **não proprietários** da edição de Festival of Blood obtida legalmente.
+
+**Gate:** registrar formato de EBOOT, identificador da edição quando disponível, versão e hash local de referência. Não publicar o EBOOT.
+
+## Fase 1 — Análise de executável e compatibilidade
+- [ ] Validar um ELF PPU PowerPC64 big-endian do próprio jogo.
+- [ ] Identificar TOC, OPD, entry point, segmentos, bibliotecas importadas e símbolos disponíveis.
+- [ ] Confirmar ferramentas e versão exata de ps3recomp que suportam o binário.
+- [ ] Mapear módulos PRX e imagens SPU, quando presentes.
+- [ ] Comparar **arquitetura e interfaces**, não endereços assumidos, com inFAMOUS 2.
+- [ ] Documentar bloqueios por edição/versão.
+
+**Gate:** relatórios reproduzíveis (sem código proprietário) e teste mínimo de loader local.
+
+## Fase 2 — Pipeline de recompilação
+- [ ] Preparar ambiente Windows: Python, CMake, Ninja, clang-cl e SDK ps3recomp.
+- [ ] Executar loader para obter metadados e importações no PC do proprietário.
+- [ ] Executar lifter PPU e registrar total de funções traduzidas/falhas.
+- [ ] Gerar mapeamento HLE, identificar funções de sistema faltantes.
+- [ ] Descobrir e tratar trabalho SPU de modo incremental.
+- [ ] Criar compilação local determinística e smoke test sem assets distribuídos.
+
+**Gate:** executável local inicia pipeline de runtime com logs; não implica jogo rodando.
+
+## Fase 3 — Boot e subsistemas
+- [ ] Gerenciamento de memória e carregamento de módulos.
+- [ ] Arquivos, perfis, salvamento, temporizadores e threads.
+- [ ] Renderização RSX → backend PC.
+- [ ] Entrada, áudio e vídeo.
+- [ ] Sincronização PPU/SPU, jobs e eventos.
+- [ ] Tela inicial do jogo (teste real, não mockup).
+
+**Gate:** vídeo/log de boot reproduzível a partir da cópia legal.
+
+## Fase 4 — Jogabilidade
+- [ ] Primeira cena e controles.
+- [ ] Navegação e câmera.
+- [ ] Poderes, combate, NPCs e missões.
+- [ ] Cidade, streaming de mundo, colisões e física.
+- [ ] Persistência de progresso; áudio; sequências.
+- [ ] Estabilidade, desempenho e compatibilidade.
+
+**Gate:** trecho jogável com testes regressivos.
+
+## Fase 5 — Publicação responsável
+- [ ] Launcher detecta arquivos locais do usuário.
+- [ ] Detectar edições/versões suportadas por hashes; rejeitar desconhecidas de forma clara.
+- [ ] Reproduzir build, testes e instruções de instalação.
+- [ ] Distribuir somente código original/licenciado e scripts, nunca arquivos do jogo.
+- [ ] Testes em máquinas Windows diferentes.
+
+## Próximo checkpoint
+**Objetivo imediato:** coletar o JSON de `inspect` (ou `SELF/SCE`) e um resumo do inventário; escolher uma edição alvo real. Não reutilizar endereços ou hashes de inFAMOUS 2 como se fossem Festival of Blood.

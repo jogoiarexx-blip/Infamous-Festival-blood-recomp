@@ -1,0 +1,36 @@
+# Arquivos de jogo e dumps locais: NUNCA publicar
+/private/
+/game/
+/dumps/
+/out/
+/build/
+/generated/
+*.ELF
+*.elf
+*.SELF
+*.self
+*.BIN
+*.bin
+*.ISO
+*.iso
+*.PKG
+*.pkg
+*.SPRX
+*.sprx
+*.PRX
+*.prx
+*.RAP
+*.rap
+*.RIF
+*.rif
+*.key
+*.KEY
+# Ambiente local e ferramentas
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+Thumbs.db
+*.log
