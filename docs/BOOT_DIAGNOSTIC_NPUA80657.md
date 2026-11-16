@@ -140,3 +140,10 @@ cmake -S "out\port" -B "out\build" -DPORT_ENABLE_SPU=ON "-DPORT_SPU_INPUTS:STRIN
 Esse comando **apenas reconfigura e gera o C SPU**, se a entrada passar nas validações. Ele reutiliza o cache do CMake que já tem Ninja/clang-cl/SDK e fontes PPU existentes. Não acionar `cmake --build` até analisar o resultado e eventuais relatórios de programa não suportado em `out/build/generated_spu/inventory.json`. O campo `PORT_ENABLE_SPU` não significa que todo o suporte do jogo foi concluído.
 
 Depois da validação, compilar incrementalmente e continuar investigação dos arquivos PSARC e `PARAM.SFO` a partir de uma cópia legal local.
+
+
+### Lifter SPU: 213 `.word` gerados (diagnóstico novo)
+
+A inspeção local de `out/build/generated_spu/inventory.json` mostrou `diagnostics.unsupported = {".word": 213}`. O C recompilado contém instruções não decodificadas a partir de `0xB2A4`; os primeiros exemplos incluem `0x65646765` (ASCII `edge`) e `0x7A6C6962` (`zlib`). Isso é **evidência de possível região de dados/strings indevidamente decodificada como código**, não prova de 213 opcodes SPU ausentes. O `spu_lifter.py` upstream suporta `--code-end`, mas o pipeline automatizado `build_spu_workloads --input` não repassa hoje esse limite; se for confirmado um limite seguro, será necessário ajustar a detecção/geração mantendo `code_ranges`, entradas, alvos e sua validação. Não substituir `.word` por NOPs.
+
+**Próximo dado:** obter menor/maior endereço de `spu_unsupported`, quantidade antes de `0xB2A4` e limites finais das funções detectadas. Nenhum ELF ou .bin deve ser enviado ao repositório.
