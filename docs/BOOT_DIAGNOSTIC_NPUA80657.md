@@ -259,3 +259,30 @@ all_shaders.xpps: NAO ENCONTRADO
 Isso comprova **ausência desses nomes sob `private/`**, não ausência na máquina inteira ou incompatibilidade de formato. O runtime traduziu os caminhos `/dev_bdvd/...` para `private/PS3_GAME/...` e `/dev_hdd0/...` para `private/game/...`; portanto trocar só o código SPU não poderá suprir recursos ausentes. A edição digital foi identificada como `NPUA80657`, mas o `BootCheck` ainda usa `BLES00000`; `PARAM.SFO` faltante pode ser relacionado, sem prova definitiva.
 
 **Próxima ação:** procurar os recursos e a estrutura de instalação da cópia legítima em outra pasta da máquina, apenas listando nomes e caminhos, e definir `PS3_VFS_ROOT` / `PS3_HDD0_ROOT` conforme a disposição real em disco. Não criar arquivos vazios com os nomes ausentes, não baixar arquivos de terceiros e não commitar assets. A investigação do SPURS policy raw segue independente. Sem uma cópia íntegra, não é possível validar o menu.
+
+## Busca mais ampla de recursos: pasta inteira da recompilação — ausência confirmada
+
+O usuário executou busca recursiva na pasta `D:\infamous recomp` (pai do projeto), cobrindo `PARAM.SFO`, `ne.bv`, `infamous1.psarc_s`, `infamous2.psarc_s`, `all_shaders.xpps` e extensões `.pkg`/`.iso`. Resultado:
+
+```text
+BUSCA EM: D:\infamous recomp
+NENHUM ARQUIVO ENCONTRADO
+TOTAL: 0
+```
+
+Isso **não prova ausência em todo o PC**. A montagem VFS atual é insuficiente para chegar ao menu sem os recursos originais. Não criar arquivos falsos nem publicar dados protegidos.
+
+### Avançar em paralelo: diagnóstico local do policy module SPURS
+
+Publicado **script original sem binário do jogo**: [`tools/inspect_spurs_policy.py`](../tools/inspect_spurs_policy.py), que inspeciona `out/spu-misses/spujob_B3523C4B17650EF8_11904.bin` estritamente local, valida tamanho 11.904 e FNV-1a `B3523C4B17650EF8`, usa base LS `0xA00` conforme o runtime `spurs_policy.c`, executa detector `find_spu_functions.py --raw` e depois `spu_lifter.py` para gerar **somente um relatório experimental** em `out/spurs-policy-probe`. O script imprime contagens de funções, instruções não suportadas, destinos ausentes e primeiros endereços problemáticos.
+
+**Não registra nem compila o módulo raw no EXE**; a integração definitiva exige validação adicional de semântica e possíveis regiões de dados. Não confundir policy raw com ELF ou jobmod `C0DEC0DE`.
+
+Na raiz do checkout Windows:
+
+```bat
+curl.exe -fL "https://raw.githubusercontent.com/jogoiarexx-blip/Infamous-Festival-blood-recomp/main/tools/inspect_spurs_policy.py" -o "tools\inspect_spurs_policy.py"
+py "tools\inspect_spurs_policy.py"
+```
+
+Enviar somente as linhas resumo produzidas pelo script, não os binários/arquivos C gerados. Se a cópia legítima completa do jogo existir fora de `D:\infamous recomp`, localizar pasta e montar VFS após validar a estrutura.
