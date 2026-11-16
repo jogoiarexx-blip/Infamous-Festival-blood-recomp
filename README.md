@@ -1,6 +1,6 @@
 # inFAMOUS: Festival of Blood — recompilação para PC
 
-> **Estado: fase 0 concluída, identificação NPUA80657; fase 1 bloqueada aguardando ELF local com segmentos acessíveis. Não jogável.**
+> **Estado: fase 0 concluída, identificação NPUA80657; fase 1 em andamento: ELF64 analisado, OPD/TOC e imports identificados. Próximo passo: rodar loader ps3recomp localmente. Não jogável.**
 
 Projeto comunitário e não oficial para estudar a viabilidade de uma recompilação estática de **inFAMOUS: Festival of Blood** (PlayStation 3) para PC, com base no ecossistema [ps3recomp](https://github.com/sp00nznet/ps3recomp).
 
@@ -10,6 +10,7 @@ Projeto comunitário e não oficial para estudar a viabilidade de uma recompila�
 
 - Ferramenta de identificação e inspeção **local** de cabeçalhos ELF/SELF, com hash SHA-256, Title ID NPDRM e metadados do ELF embutido.
 - Inventário local de arquivos por tamanho e hash (opcional; não publica arquivos).
+- **Analisador PPU** que contabiliza descritores OPD, endereços de função, TOC e bibliotecas sem distribuir código do jogo. Validado em EBOOT.elf NPUA80657.
 - Testes unitários e CI sem conteúdo do jogo.
 - Plano de investigação com critérios de validação.
 
@@ -29,12 +30,15 @@ Projeto comunitário e não oficial para estudar a viabilidade de uma recompila�
 ```powershell
 py tools/inspect_ps3_binary.py inspect "private/game/EBOOT.ELF" --output "out/eboot-report.json"
 py tools/inspect_ps3_binary.py inventory "private/game" --output "out/inventory.json"
+py tools/analyze_ppu.py "private/game/EBOOT.ELF" --output "out/ppu-summary.json"
 py -m unittest discover -s tests -v
 ```
 
 Se você só tiver um `EBOOT.BIN` no formato SELF, o script mostrará a identificação NPDRM e os metadados do cabeçalho ELF embutido. **Ele não extrai nem descriptografa o programa.** Não renomeie SELF para ELF: isso não o converte.
 
-**Primeiro resultado real:** [relatório do EBOOT NPUA80657](docs/REPORT-NPUA80657.md), identificado como inFAMOUS: Festival of Blood (edição PSN americana).
+**Resultados reais:** [identificação SELF/NPDRM](docs/REPORT-NPUA80657.md) e [análise do ELF decodificado](docs/ELF_ANALYSIS_NPUA80657.md), da edição NPUA80657 de Festival of Blood.
+
+**Atenção:** O pipeline oficial do ps3recomp e a tradução das funções ainda não foram executados; esta é somente a etapa de análise estática.
 
 > **Privacidade:** relatórios de inventário contêm nomes, tamanhos e hashes dos arquivos. Revise antes de compartilhá-los; não envie os próprios arquivos do jogo.
 
