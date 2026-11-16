@@ -68,7 +68,7 @@ def inspect_sce(path: Path, size: int) -> dict[str, Any]:
         result["title_id"] = match.group(1).decode("ascii")
         result["content_id"] = match.group(0).decode("ascii")
 
-    if elf_off + 64 <= len(metadata) and metadata[elf_off:elf_off + 4] == b"\\x7fELF":
+    if elf_off + 64 <= len(metadata) and metadata[elf_off:elf_off + 4] == b"\x7fELF":
         identification = metadata[elf_off:elf_off + 16]
         bits = {1: 32, 2: 64}.get(identification[4])
         order = {1: ("little", "<"), 2: ("big", ">")}.get(identification[5])
