@@ -93,3 +93,26 @@ Nem toda tentativa de abertura deve existir (algumas são buscas opcionais ou fa
 2. Inspecionar diretórios locais de assets e `PARAM.SFO`; comparar com os caminhos VFS procurados e ajustar raiz.
 3. Descobrir/levantar SPU ELF e jobmods específicos do jogo, ligar o suporte SPU no CMake, recompilar e testar novamente.
 4. Coletar novo log e comparar até onde o boot avança. Separar avisos secundários de bloqueios reais.
+
+## Captura confirmada na segunda execução — 2026-11-16
+
+O usuário executou o comando `SPU_DUMP_MISS` e enviou **apenas o log textual**. O runtime escreveu dois arquivos locais:
+
+| Arquivo local (dentro de `out/spu-misses/`) | Tamanho / identificador | Papel observado |
+|---|---:|---|
+| `spujob_B3523C4B17650EF8_11904.bin` | 11.904 bytes, fp=0xB3523C4B17650EF8 | SPURS policy module `Wws_Job`, três workloads `General`, `EdgeGeom`, `SpuLight` (mesmo fp) |
+| `spujob_00E729804474449A_38100.bin` | 38.100 bytes, fp=0x00E729804474449A | Programa despachado por `spu_workload_dispatch_async`, sem registro |
+
+A captura **não** faz lifting nem registra esses módulos. O segundo teste também terminou com `sys_process_exit(code=0)`, sem menu; as falhas de VFS persistem. A extensão `.bin` e o nome `spujob_` são nomes do dumper, **não prova de que ambos são overlays WWS da mesma classe**.
+
+**Cuidado:** `tools/lift_jobmods.py --jobmods` trata todos os `*.bin` de entrada como módulos WWS com cabeçalho especial; os primeiros 96 bytes do primeiro policy module no log `PM@0x0092D900` **não apresentam assinatura `C0DEC0DE` no deslocamento +0x20**, então não processar ambos indiscriminadamente por essa ferramenta.
+
+### Próximo experimento: identificar formato real, sem extrair nem enviar código
+
+No Developer Command Prompt x64, na raiz do projeto:
+
+```bat
+py -c "from pathlib import Path; files=sorted(Path('out/spu-misses').glob('*.bin')); [(lambda b: print(p.name, len(b), 'ELF32-SPU' if b[:4]==bytes.fromhex('7F454C46') and b[4:6]==bytes([1,2]) and b[18:20]==bytes([0,23]) else 'JOBMOD-C0DE' if b[32:36]==bytes.fromhex('C0DEC0DE') else 'RAW-OUTRO'))(p.read_bytes()) for p in files]"
+```
+
+Esse comando imprime somente nome, tamanho e a classificação preliminar: `ELF32-SPU`, `JOBMOD-C0DE` ou `RAW-OUTRO`. `RAW-OUTRO` não é um erro; pode ser um policy module sem cabeçalho ELF. Se um arquivo for ELF, o caminho correto é `build_spu_workloads.py --input` com compilação/registro; se for raw policy, exige estratégia própria de wrapping/lifting e registro sob o fingerprint específico. Verificar também se os arquivos originais do jogo e `PARAM.SFO` estão disponíveis na raiz adequada para `PS3_VFS_ROOT`.
