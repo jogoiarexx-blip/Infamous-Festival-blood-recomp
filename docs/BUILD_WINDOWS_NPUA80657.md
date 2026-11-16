@@ -40,7 +40,7 @@ cmake -S "out\port" -B "out\build" -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_
 
 ## Passo 3 — primeira tentativa de compilação (configuração confirmada como concluída)
 
-A execução local do CMake exibiu `Configuring done` / `Generating done` e detectou `ps3recomp runtime v0.19.0` e `33` fontes recompiladas. O modo de build foi `Debug`. Em 16/11/2026 o usuário relatou que o Ninja chegou a `[200/201] Linking CXX executable MyGameRecomp.exe` e retornou ao prompt **sem erro fatal** após 448 avisos. Confirmar a existência física do executável e executar primeiro boot local.
+A execução local do CMake exibiu `Configuring done` / `Generating done` e detectou `ps3recomp runtime v0.19.0` e `33` fontes recompiladas. O modo de build foi `Debug`. Em 16/11/2026 o usuário relatou que o Ninja chegou a `[200/201] Linking CXX executable MyGameRecomp.exe` e retornou ao prompt **sem erro fatal** após 448 avisos. **Arquivo confirmado** pelo usuário em `out/build/MyGameRecomp.exe` (515.762.176 bytes em 16/11/2026, 14:59). O primeiro boot local ainda não foi testado.
 
 ```bat
 cmake --build "out\build" --parallel 2
