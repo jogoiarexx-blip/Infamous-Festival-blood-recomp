@@ -360,3 +360,28 @@ As quatro pequenas funções `0x15C0..0x15F8` são provavelmente **metadados WWS
 **Avanço de engenharia publicado:** [`tools/prepare_spurs_policy.py`](../tools/prepare_spurs_policy.py) confere hash FNV do raw capturado, marcadores WWSJ, intervalos exatos, ausência de referências diretas de código preservado às quatro entradas falsas e suporte do SDK ao interpretador SMC `0x3FEC0`. Se passar, faz o lifting preservando as outras **190 funções**, exigindo `unsupported={}` e somente `0x3FEC0` externo; debasa includes e registra a policy com **image_id=2** via o hook opcional `jobmods_register.c` do template (apenas nome do hook; comentário esclarece ser policy). Todos arquivos derivados e dump permanecem em `out/` e ignorados pelo Git.
 
 **Próximo teste do usuário:** baixar `tools/prepare_spurs_policy.py`, executar, preservar EXE anterior, reconfigurar CMake e compilar localmente apenas se as validações passarem. Depois testar em log `PM resolved`, `pm-end`, `BRANCH-TO-0`, `EventFlagWait`, com a cautela de que registro não prova execução funcional. Se a preparação falhar por salto para as pseudo-funções, não forçar o filtro.
+
+## Novo log real: política SPURS resolvida, mas polling DMA trava (16/11/2026)
+
+O usuário compilou e executou com a policy RAW registrada (`tools/prepare_spurs_policy.py`), e trouxe:
+
+```text
+[cellSpurs] wid=0 PM resolved (fp=0xB3523C4B17650EF8 image=2)
+[cellSpurs] wid=1 PM resolved (fp=0xB3523C4B17650EF8 image=2)
+[cellSpurs] wid=2 PM resolved (fp=0xB3523C4B17650EF8 image=2)
+[spu_workload] dispatch HIT (async) fp=0x00E729804474449A image=1
+[spu_workload] WAIT_SIGNAL#1 enter task=0 taskset=0x10481200
+[hle] unresolved NID 0x8A85674D
+[spu-dma] img=2 pc=0x02514: 256 identical transfers to ea=0x1047AE00 -- halting the SPU
+[spu-dma] img=2 pc=0x02514: 256 identical transfers to ea=0x1046AF00 -- halting the SPU
+[pm-end] lane=0/1/2 halted=1 status=0x2 pc=0x02514...
+[cellSpurs] EventFlagWait BLOCKED ... pattern 0x0001 bits=0x0000
+```
+
+**Novo marco concreto:** o `PM NOT LIFTED` anterior foi resolvido nos workloads 0,1,2, e o SPURS policy **chega a executar**. Todavia o ciclo de DMA em `pc=0x2514` indica que **não há progresso**: o watchdog do runtime `runtime/spu/spu_dma.h` detecta 256 DMA idênticas por ~30s e interrompe a tarefa (não desligar o watchdog cegamente). O PPU/primeira task SPU continua aguardando sinal, e permanece ausência de `infamous2.psarc_s`, `all_shaders.xpps`, `ne.bv` e de patches (não se sabe se patches são obrigatórios na edição do usuário).
+
+A função `_cellSpursLFQueuePushBody` NID `0x8A85674D` está confirmada em `tools/nid_from_protos.json`. O PR upstream [sp00nznet/ps3recomp#766](https://github.com/sp00nznet/ps3recomp/pull/766), **ABERTO / NÃO INCORPORADO**, propõe implementá-la e registrá-la, a partir de `DriifterSelf/ps3recomp` SHA `b2d050a06dbb297e595271f95364db2e0dbe68f9` sobre `de4f090328ea08bef6b2f15caec0b85e343a7ece`. A issue upstream [#686](https://github.com/sp00nznet/ps3recomp/issues/686) descreve esse NID ausente como causa de produtor que descarta dados, consumidor WAIT_SIGNAL e espera de carregador. **É hipótese forte, mas não prova causal para Festival of Blood.** O PR contém heurísticas de despertar que não foram confirmadas para este jogo. Não tratar como fix definitivo.
+
+Ferramenta de experimento segura [`tools/try_lfqueue_pr766.py`](../tools/try_lfqueue_pr766.py): busca comparação fixada nos dois SHAs (não o HEAD mutável do PR), verifica que patch só altera `libs/spurs/cellSpurs.{c,h}` e `tools/nid_database.py`, exige checkout Git e árvore limpa para esses arquivos, faz `git apply --check`, guarda backup em `out/diagnostics`, e só modifica checkout do SDK quando executada com `--apply`. `--status` e `--revert` previstos. **Não edita nenhum binário do jogo** e não compila automaticamente. Depois recompilar o runtime pelo CMake de `out/port`, confirmar que o HLE NID fica registrado e comparar os novos logs. Se a aplicação do patch falhar, script deve abortar sem alterar o checkout; usuário deve enviar a mensagem para diagnóstico.
+
+A ausência de recursos não deve ser falsificada por renomear `.psarc` para `.psarc_s`; apenas dados legítimos no formato exigido.
