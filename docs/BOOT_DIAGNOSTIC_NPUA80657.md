@@ -219,3 +219,27 @@ D:\infamous recomp\Infamous-Festival-blood-recomp-main>
 Não há erro fatal ou falha de linker nas linhas recebidas. O terminal voltou ao prompt depois do link; **compilação aparentemente concluída com êxito**, sujeita a confirmação de data do EXE. As 93 mensagens são advertências de compilação, não prova de erro.
 
 **Próximos passos:** conferir a presença e data de `out/build/MyGameRecomp.exe` e executar um teste de boot redirecionando stdout/stderr a `out/boot_spu.log`. Verificar se o fingerprint ELF `00E729804474449A` ainda mostra `async dispatch MISS`, se o módulo SPURS raw `B3523C4B17650EF8` permanece `PM NOT LIFTED`, se o VFS continua falhando e se há progressão além de `sys_process_exit(code=0)`. Não declarar o jogo jogável sem esses dados. Logs de diagnóstico podem ser compartilhados após revisar dados privados; não publicar EBOOT, `.bin`, PSARC ou C gerado.
+
+## Boot com primeiro SPU registrado — evidência de mudança real (16/11/2026)
+
+Resultado do segundo boot `out/boot_spu.log`, extraído pelo usuário:
+
+```text
+[cellSpurs] wid=0 PM NOT LIFTED (fp=0xB3523C4B17650EF8 size=11904)
+[cellSpurs] wid=1 PM NOT LIFTED (fp=0xB3523C4B17650EF8 size=11904)
+[cellSpurs] wid=2 PM NOT LIFTED (fp=0xB3523C4B17650EF8 size=11904)
+[spu_workload] dispatch HIT (async) fp=0x00E729804474449A args=0x10480200 image=1 -> spawning thread
+[spu_workload] WAIT_SIGNAL#1 enter task=0 taskset=0x10481200 ran=0ms
+[sys_fs] open FAILED: .\USRDIR\ne.bv
+[fs] open FAIL '/dev_bdvd/PS3_GAME/USRDIR/cache_fob/psarc/install1/infamous1.psarc_s' -> 'private/PS3_GAME/USRDIR/cache_fob/psarc/install1/infamous1.psarc_s'
+[fs] open FAIL '/dev_bdvd/PS3_GAME/USRDIR/cache_fob/psarc/install2/infamous2.psarc_s' -> 'private/PS3_GAME/USRDIR/cache_fob/psarc/install2/infamous2.psarc_s'
+[fs] open FAIL '/dev_hdd0/game/NPUA80657_INSTALL/USRDIR/all_shaders.xpps' -> 'private/game/NPUA80657_INSTALL/USRDIR/all_shaders.xpps'
+[fs] open FAIL '/dev_bdvd/PS3_GAME/USRDIR/all_shaders.xpps' -> 'private/PS3_GAME/USRDIR/all_shaders.xpps'
+[sysPrxForUser] sys_process_exit(code=0)
+```
+
+**Vitória confirmada:** o fingerprint SPU ELF antes descartado por `dispatch MISS` agora passa pelo lookup e inicia uma thread. Não confundir `dispatch HIT` com tarefa finalizada ou jogo jogável. A espera `WAIT_SIGNAL` e as três políticas SPURS `PM NOT LIFTED` continuam sem solução.
+
+**Próxima prioridade:** inventariar **somente nomes e caminhos** dos arquivos originais presentes em `private/` (especialmente `PARAM.SFO`, `ne.bv`, `infamous1.psarc_s`, `infamous2.psarc_s` e `all_shaders.xpps`). Distinguir arquivo inexistente de arquivo presente sob raiz VFS errada, antes de qualquer mudança no mapper; checar `PS3_VFS_ROOT` conforme os caminhos no log. Depois, tratar o módulo SPURS policy raw por fluxo separado, sem tratá-lo como ELF ou jobmod com `C0DEC0DE`.
+
+**Não publicar** arquivos do jogo, code dump SPU, executável ou fontes geradas.
