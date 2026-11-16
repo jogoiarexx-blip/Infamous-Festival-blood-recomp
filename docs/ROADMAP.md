@@ -28,7 +28,7 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [x] Executar lifter PPU com `--functions` e `--hle-stubs`: 40.085 entradas traduzidas, 12.848 wrappers e 32 arquivos C++ gerados localmente. **Três avisos de continuação pendentes**; ver [relatório](PPU_LIFT_RESULT_NPUA80657.md).
 - [x] Gerar tabela HLE: `ppu_hle_nids.cpp`, 1.238 handlers de 93 módulos (execução local confirmada em 2026-11-16).
 - [ ] Comparar os 302 imports do jogo com os handlers disponíveis e verificar eventuais funções HLE faltantes.
-- [ ] Descobrir e tratar trabalho SPU de modo incremental.
+- [ ] Tratar trabalho SPU incrementalmente: dois programas capturados, **ELF SPU de 38.100 bytes traduzido em teste isolado com 621 funções, nenhum opcode `.word` e destinos diretos resolvidos**; script local de integração disponível em [tools/prepare_spu_elf.py](../tools/prepare_spu_elf.py). Registro/compilação e execução real ainda não confirmados. Policy module raw de 11.904 bytes segue pendente.
 - [x] Configuração CMake e compilação/link inicial em Windows sem erro fatal relatado: `[200/201] Linking CXX executable MyGameRecomp.exe`; prompt retornou (448 avisos). **Arquivo confirmado pelo usuário** em `out/build/MyGameRecomp.exe` (515.762.176 bytes, 16/11/2026 14:59).
 - [x] Executar primeiro teste de boot local: runner entrou no PPU, inicializou runtime/threads/SPURS/GCM/FIOS e encerrou com `sys_process_exit(code=0)` **sem chegar ao menu** (log fornecido em 2026-11-16).
 - [ ] Corrigir bloqueios de boot confirmados: [SPU não recompilado, assets ausentes no VFS e metadados](BOOT_DIAGNOSTIC_NPUA80657.md).
