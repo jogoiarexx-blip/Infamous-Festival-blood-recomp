@@ -15,7 +15,7 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 ## Fase 1 — Análise de executável e compatibilidade
 - [x] Validar um ELF PPU PowerPC64 big-endian do próprio jogo (NPUA80657, SHA-256 registrado).
 - [x] Identificar TOC, OPD, entry point, segmentos e bibliotecas importadas; binário sem tabela de nomes de seções utilizável e sem símbolos de função conhecidos.
-- [ ] Confirmar ferramentas e versão exata de ps3recomp que suportam o binário.
+- [ ] Registrar commit exato do ps3recomp instalado localmente (loader já validado e funcional no EBOOT do jogo).
 - [ ] Mapear módulos PRX e imagens SPU, quando presentes.
 - [ ] Comparar **arquitetura e interfaces**, não endereços assumidos, com inFAMOUS 2.
 - [ ] Documentar bloqueios por edição/versão.
@@ -24,7 +24,7 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 
 ## Fase 2 — Pipeline de recompilação
 - [ ] Preparar ambiente Windows: Python, CMake, Ninja, clang-cl e SDK ps3recomp.
-- [ ] Executar loader para obter metadados e importações no PC do proprietário.
+- [x] Executar loader oficial no ELF do proprietário: 16.578 OPD, 14.789 funções, 302 imports/21 bibliotecas (log verificado em 2026-11-16).
 - [ ] Executar lifter PPU e registrar total de funções traduzidas/falhas.
 - [ ] Gerar mapeamento HLE, identificar funções de sistema faltantes.
 - [ ] Descobrir e tratar trabalho SPU de modo incremental.
@@ -60,4 +60,4 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [ ] Testes em máquinas Windows diferentes.
 
 ## Próximo checkpoint
-**Objetivo imediato:** ELF de NPUA80657 confirmado, 16.578 descritores OPD válidos, 14.789 endereços distintos e 302 imports em 21 bibliotecas. Ver [relatório ELF](ELF_ANALYSIS_NPUA80657.md). Próximo bloqueio: validar esses resultados com o **loader oficial ps3recomp** e mapear funções adicionais/SPU. Não reutilizar endereços ou hashes de inFAMOUS 2.
+**Objetivo imediato:** loader oficial ps3recomp **executado com sucesso** no computador do proprietário, confirmando 16.578 descritores OPD, 14.789 endereços distintos e 302 imports em 21 bibliotecas. Próximo passo: executar o **lifter PPU** com `--functions` e `--hle-stubs` e verificar geração de C++ local; depois SPU/HLE. Não reutilizar endereços ou hashes de inFAMOUS 2.
