@@ -40,7 +40,7 @@ cmake -S "out\port" -B "out\build" -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_
 
 ## Passo 3 — primeira tentativa de compilação (configuração confirmada como concluída)
 
-A execução local do CMake exibiu `Configuring done` / `Generating done` e detectou `ps3recomp runtime v0.19.0` e `33` fontes recompiladas. O modo de build foi `Debug`. **Compilação ainda não executada/verificada**.
+A execução local do CMake exibiu `Configuring done` / `Generating done` e detectou `ps3recomp runtime v0.19.0` e `33` fontes recompiladas. O modo de build foi `Debug`. Em 16/11/2026 o usuário relatou que o Ninja chegou a `[200/201] Linking CXX executable MyGameRecomp.exe` e retornou ao prompt **sem erro fatal** após 448 avisos. Confirmar a existência física do executável e executar primeiro boot local.
 
 ```bat
 cmake --build "out\build" --parallel 2
@@ -53,3 +53,21 @@ O alvo do template chama-se `MyGameRecomp`; isso é **temporário**. Mesmo se o 
 ## Referências
 - [ps3recomp: template/project/README.md](https://github.com/sp00nznet/ps3recomp/blob/master/templates/project/README.md)
 - [ps3recomp: Getting Started](https://github.com/sp00nznet/ps3recomp/blob/master/docs/GETTING_STARTED.md)
+
+## Passo 4 — conferir o executável e testar o primeiro boot
+
+O próprio usuário deve executar estes comandos **somente na máquina que possui o jogo**:
+
+```bat
+dir "out\build\MyGameRecomp.exe"
+```
+
+Depois, caso exista e com o projeto atual como diretório de trabalho:
+
+```bat
+"out\build\MyGameRecomp.exe" "private\game\EBOOT.elf"
+```
+
+É um smoke test do runner e do runtime, **não uma indicação de que o jogo já funciona**. O template usa o ELF de entrada, tenta montar a raiz VFS a partir desse caminho e pode abrir uma janela D3D12; com o ELF em `private\game\EBOOT.elf`, a raiz inferida provavelmente será o diretório atual, e não um dump de `PS3_GAME`. Se a inicialização reclamar de arquivos não encontrados, localizar a cópia legal completa localmente e ajustar `PS3_VFS_ROOT` na próxima tentativa. A API `main.cpp` do template consulta `PS3_VFS_ROOT` e não lê um segundo argumento para VFS no código verificado.
+
+Se travar, fechar a janela gráfica ou usar `Ctrl+C` no prompt. Salvar os logs de erro (sem anexar ou publicar binários e assets). Não publicar o executável derivado do jogo.
