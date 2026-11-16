@@ -116,3 +116,27 @@ py -c "from pathlib import Path; files=sorted(Path('out/spu-misses').glob('*.bin
 ```
 
 Esse comando imprime somente nome, tamanho e a classificação preliminar: `ELF32-SPU`, `JOBMOD-C0DE` ou `RAW-OUTRO`. `RAW-OUTRO` não é um erro; pode ser um policy module sem cabeçalho ELF. Se um arquivo for ELF, o caminho correto é `build_spu_workloads.py --input` com compilação/registro; se for raw policy, exige estratégia própria de wrapping/lifting e registro sob o fingerprint específico. Verificar também se os arquivos originais do jogo e `PARAM.SFO` estão disponíveis na raiz adequada para `PS3_VFS_ROOT`.
+
+## Identificação dos formatos — próxima etapa
+
+O usuário confirmou via análise local de cabeçalho:
+
+```text
+spujob_00E729804474449A_38100.bin 38100 ELF32-SPU
+spujob_B3523C4B17650EF8_11904.bin 11904 RAW-OUTRO
+```
+
+- O primeiro arquivo foi reconhecido como ELF32 big-endian, máquina SPU. Agora é candidato a `build_spu_workloads.py --input`, com validação adicional de layout/segmentos pelo gerador.
+- O segundo **não** passou nem na identificação de ELF nem na assinatura `C0DEC0DE` em `+0x20`; é um policy module SPURS raw, cujo caminho de lifting/registro precisará ser construído/validado separadamente. Não passar esse arquivo a `lift_jobmods.py --jobmods` indiscriminadamente.
+
+### Configuração incremental (somente ELF-SPU)
+
+No **x64 Native Tools Command Prompt** já configurado, a partir da raiz do projeto:
+
+```bat
+cmake -S "out\port" -B "out\build" -DPORT_ENABLE_SPU=ON "-DPORT_SPU_INPUTS:STRING=%CD%\out\spu-misses\spujob_00E729804474449A_38100.bin"
+```
+
+Esse comando **apenas reconfigura e gera o C SPU**, se a entrada passar nas validações. Ele reutiliza o cache do CMake que já tem Ninja/clang-cl/SDK e fontes PPU existentes. Não acionar `cmake --build` até analisar o resultado e eventuais relatórios de programa não suportado em `out/build/generated_spu/inventory.json`. O campo `PORT_ENABLE_SPU` não significa que todo o suporte do jogo foi concluído.
+
+Depois da validação, compilar incrementalmente e continuar investigação dos arquivos PSARC e `PARAM.SFO` a partir de uma cópia legal local.
