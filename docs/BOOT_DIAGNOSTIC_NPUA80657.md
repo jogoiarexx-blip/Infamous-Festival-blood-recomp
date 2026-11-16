@@ -395,3 +395,23 @@ O usuário executou `py tools/try_lfqueue_pr766.py --apply` mas a versão inicia
 **Descoberta crítica adicional:** o CMake usa o arquivo de HLE **estático** `out/recompiled/ppu_hle_nids.cpp`. Apenas aplicar o PR no SDK **não** registraria o NID nessa recompilação (o CMake não regenera a tabela quando ela já existe). O script atualizado insere somente a declaração da função `_cellSpursLFQueuePushBody` e a chamada `ps3_hle_register(0x8A85674D, ...)` na tabela existente, fazendo backup e mantendo todos os outros NIDs. A reversão restaura tabela e SDK se não foram modificados desde a aplicação. O script interrompe a aplicação se o formato da tabela não for reconhecido, as fontes divergirem ou houver mudanças não esperadas.
 
 O próximo teste local deve baixar o script **novamente** (o anterior estava errado), executar `--apply` e **somente se disser SUCESSO** seguir `cmake -S out/port -B out/build ...`, `cmake --build ...`; no boot, examinar presença de `_cellSpursLFQueuePushBody`, ausência de `unresolved NID 0x8A85674D`, e se ainda há DMA infinito e flag sem sinal. Não há garantia de jogo funcional e PR upstream continua em revisão.
+
+## Teste PR #766 recompilado: enqueue real, deadlock DMA persistente (16/11/2026)
+
+Log de usuário após aplicar patch e registrar NID em `out/recompiled/ppu_hle_nids.cpp`:
+
+```text
+ps3_hle_register(0x8A85674Du, "_cellSpursLFQueuePushBody", (void*)_cellSpursLFQueuePushBody);
+[cellSpurs] _cellSpursLFQueuePushBody#1 q=0x10482B80 slot=0 (cur=0->1)
+    buf=0x10482C00 size=32 depth=12 waiters=0 woke=-1 taskset=0x00A8F681
+[spu-dma] img=2 pc=0x02514: 256 identical transfers to ea=0x1047AE00 -- halting the SPU
+[spu-dma] img=2 pc=0x02514: 256 identical transfers to ea=0x1046AF00 -- halting the SPU
+[spu-dma] img=2 pc=0x02514: 256 identical transfers to ea=0x10379700 -- halting the SPU
+[pm-end] lane 0/1/2 halted=1 status=0x2 pc=0x02514
+```
+
+**Conclusão precisa:** função de LFQueue agora EXECUTA, registra um elemento com tail avançado de 0 para 1. Isso elimina o NID ausente, **não** elimina stall nem prova que o SPU consumiu o elemento. `0x02514` ainda é ponto de travamento em todas as três lanes, com EA variáveis por lane (provavelmente filas/estado diferentes). Não desativar repetição DMA nem forçar event flag.
+
+**Suspeita específica para inspecionar:** campo `+0x70` da LFQueue, logado como `taskset=0x00A8F681`, não coincide com o `WAIT_SIGNAL` taskset previamente registrado `0x10481200`. É endereço **não alinhado a 128** e bit 0 definido; o próprio issue upstream [#686](https://github.com/sp00nznet/ps3recomp/issues/686) observa que esse campo pode ser **SPURS instance | 1**, e o PR #766 o trata como taskset, inclusive fazendo `spu_taskset_signal_task(tsp,0)` e `...,1`, sem validar tipo. Esse tratamento **pode estar incorreto** para este jogo; possível corrupção de estado via escrita em endereço marcado. Não se deve derivar correção ou forçar sinal sem observar mais logs/protocolo.
+
+Criei o diagnóstico de leitura **offline** [`tools/diagnose_spurs_dma_loop.py`](../tools/diagnose_spurs_dma_loop.py), que lê apenas `out/boot_lfqueue_v2.log` e o módulo RAW SPURS privado validado por fingerprint, destaca filas/owners/event flags/signals e desmonta mnemônicos de `0x24D4..0x2548` e PCs de branches recentes. Nenhuma alteração no motor, build, exe ou game. Próximo passo: usuário baixar e executar script, enviar só `=== CRUZAMENTO DE ENDERECOS ===`, `=== INSTRUCOES SPURS ===` e sinais. Isso distingue polling legítimo de layout DMA incorreto e sinal para taskset errado. Quando resolvido, estudar HLE de event flag. Recursos da instalação seguem incompletos.
