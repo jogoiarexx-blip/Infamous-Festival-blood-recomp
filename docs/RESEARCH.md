@@ -8,6 +8,7 @@
 - [erikomis/infamous2-recomp](https://github.com/erikomis/infamous2-recomp). Referência adicional, não presumir equivalência de binários.
 
 ## Confirmado
+- **Festival of Blood / NPUA80657:** análise local de um EBOOT.BIN SELF/NPDRM com cabeçalho ELF64 PowerPC, sem decodificação dos segmentos. Ver [relatório da amostra](REPORT-NPUA80657.md).
 - O ps3recomp dispõe de loader e lifter para PPU e de runtime com HLE para o ecossistema PlayStation 3.
 - A recompilação PPU trabalha sobre **ELF**; um contêiner retail SELF não equivale a um ELF pronto.
 - A implementação atual do repositório somente identifica cabeçalhos, calcula SHA-256 e gera inventário. Nenhum jogo foi testado.
