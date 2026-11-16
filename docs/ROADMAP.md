@@ -23,7 +23,7 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 **Gate:** relatórios reproduzíveis (sem código proprietário) e teste mínimo de loader local.
 
 ## Fase 2 — Pipeline de recompilação
-- [ ] Preparar ambiente Windows: Python, CMake, Ninja, clang-cl e SDK ps3recomp.
+- [x] Preparar ambiente Windows: Python 3.12.10, CMake 4.4.3, Ninja 1.13.2, clang-cl 23.1.5, VS Build Tools 2022 x64 e fonte do ps3recomp (confirmado pelo usuário em 2026-11-16).
 - [x] Executar loader oficial no ELF do proprietário: 16.578 OPD, 14.789 funções, 302 imports/21 bibliotecas (log verificado em 2026-11-16).
 - [x] Executar lifter PPU com `--functions` e `--hle-stubs`: 40.085 entradas traduzidas, 12.848 wrappers e 32 arquivos C++ gerados localmente. **Três avisos de continuação pendentes**; ver [relatório](PPU_LIFT_RESULT_NPUA80657.md).
 - [x] Gerar tabela HLE: `ppu_hle_nids.cpp`, 1.238 handlers de 93 módulos (execução local confirmada em 2026-11-16).
@@ -61,4 +61,4 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [ ] Testes em máquinas Windows diferentes.
 
 ## Próximo checkpoint
-**Objetivo imediato:** geração PPU concluída (40.085 entradas em 32 arquivos C++) e tabela HLE gerada localmente (1.238 handlers de 93 módulos). Próximo passo: verificar `cmake`, `ninja`, `clang-cl` e MSVC Build Tools no Windows; preparar o template do projeto para compilar. A cobertura real das 302 importações e três avisos de continuação em `0x0096FF68` permanecem pendentes. Ainda não há executável jogável nem boot validado.
+**Objetivo imediato:** ambiente Windows x64 confirmado (CMake, Ninja, clang-cl, VS 2022). Próximo passo: [configurar o template local via CMake](BUILD_WINDOWS_NPUA80657.md), então tentar compilar, registrar falhas e investigar SPU/HLE. Três avisos de continuação em `0x0096FF68` permanecem pendentes. Ainda não há executável jogável nem boot validado.
