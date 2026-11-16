@@ -286,3 +286,33 @@ py "tools\inspect_spurs_policy.py"
 ```
 
 Enviar somente as linhas resumo produzidas pelo script, não os binários/arquivos C gerados. Se a cópia legítima completa do jogo existir fora de `D:\infamous recomp`, localizar pasta e montar VFS após validar a estrutura.
+
+## Boot com tela preta e espera SPURS — 16/11/2026 (log do usuário)
+
+Com `infamous1.psarc_s` copiado para o caminho VFS solicitado, o usuário executou `out/build/MyGameRecomp.exe`. A janela D3D12 abriu com FPS variando, **sem imagem**. O log de encerramento contém:
+
+```text
+[fs] open FAIL '/dev_hdd0/game/NPUA80657_INSTALL/USRDIR/all_shaders.xpps'
+[fs] read fd=3 nbytes=10735 -> 10735 (magic=78DAED9D, total=109883)
+[hle] unresolved NID 0x8A85674D
+[D3D12] device: "NVIDIA GeForce RTX 4060"
+[D3D12] Initialization complete (1280x720, 2 buffers, pipeline=ready)
+[rsx] D3D12 backend init OK -- window open
+[RSX] unknown method 0x0370 = 0x0000FFF0
+[RSX] unknown method 0x1FCC = 0x0000006F
+[RSX] unknown method 0x01A8 = 0xFEED0001
+[RSX] unknown method 0x1450 = 0x00080004
+[spu_workload] task 0 (taskset 0x10481200) sleeping 1s...16s in WAIT_SIGNAL
+[cellSpurs] EventFlagWait BLOCKED tid=26160 24s on pattern 0x0001 (mode=AND, bits=0x0000) flagEA=0x10482B00
+[quit] requested (window closed)
+[quit] the game did not exit on its own; ending it ...
+```
+
+**Interpretação:** D3D12 inicializado não é frame desenhado. Uma thread de tarefa SPU estacionou em `WAIT_SIGNAL`, enquanto a thread PPU permaneceu esperando `cellSpursEventFlagWait` pelo bit `0x0001` que continuou zero por 24s. O processo **não** chegou a concluir essa sequência: o usuário fechou a janela. Os 3 workloads `PM NOT LIFTED` da execução anterior ainda não foram implementados. Ninguém deve forçar/fabricar esse bit para mostrar o menu: a tarefa precisa produzir os dados de fato.
+
+**Nova descoberta importante:** o NID HLE não resolvido `0x8A85674D` é **`_cellSpursLFQueuePushBody`**, conforme listas de NID da PS3 Developer Wiki. O SDK já possui `_cellSpursLFQueueInitialize` e `cellSpursQueuePushBody` (esta última é uma API **diferente**) em `libs/spurs/cellSpurs.c`; não foi encontrada implementação de `_cellSpursLFQueuePushBody`. Isso acrescenta uma hipótese plausível para a ausência de sinal: uma operação de fila SPURS foi descartada por HLE ausente. É **necessário identificar ABI e layout da LFQueue real antes de implementar**; não substituir `_cellSpursLFQueuePushBody` pela `cellSpursQueuePushBody` sem validação.
+
+**Próximas ações prioritárias:**
+1. Rodar `tools/inspect_spurs_policy.py` (já publicado no repo) sobre o módulo RAW `B3523C4B17650EF8`, sem compilar/registrar prematuramente. Compartilhar só resumo de mnemônicos/limites, não binário.
+2. Verificar a estrutura da LFQueue e a origem do NID `0x8A85674D`, incluindo chamada e parâmetros, antes de adicionar HLE com comportamento real. Evitar retorno de sucesso falso.
+3. Verificar `all_shaders.xpps` e método RSX só após a conclusão das tarefas de inicialização, porque a tela preta pode ser consequência do bloqueio SPURS e da ausência de recursos.
