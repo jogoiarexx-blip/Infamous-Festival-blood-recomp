@@ -42,6 +42,39 @@ class BinaryInspectorTests(unittest.TestCase):
             self.assertEqual(info["format"], "SELF/SCE")
             self.assertNotIn("ppu_candidate", info)
 
+    def test_self_with_realistic_embedded_ppu_header(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "EBOOT.BIN"
+            payload = bytearray(512)
+            struct.pack_into(">4sIHHIQQ", payload, 0, b"SCE\x00", 2, 1, 1, 0x80, 512, 10927304)
+            struct.pack_into(
+                ">10Q", payload, 32,
+                3, 0x70, 0x90, 0xd0, 0, 0x200, 0x250, 0x300, 0, 0,
+            )
+            struct.pack_into(">I", payload, 0x70 + 12, 8)
+            payload[0x90:0xD0] = sample_elf64_be()
+            content_id = b"UP9000-NPUA80657_00-BLOODSHP10041043"
+            payload[0x190:0x190 + len(content_id)] = content_id
+            path.write_bytes(payload)
+            info = inspect_binary(path)
+            self.assertEqual(info["format"], "SELF/SCE")
+            self.assertEqual(info["title_id"], "NPUA80657")
+            self.assertEqual(info["content_id"], content_id.decode("ascii"))
+            self.assertTrue(info["is_npdrm"])
+            self.assertEqual(info["self_header_size"], 512)
+            self.assertEqual(info["elf_size_declared"], 10927304)
+            self.assertTrue(info["embedded_elf"]["ppu_candidate"])
+            self.assertEqual(info["embedded_elf"]["entry_point"], "0x10000")
+            self.assertTrue(info["embedded_elf"]["header_only"])
+
+    def test_sce_header_does_not_claim_decrypted_executable(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "EBOOT.BIN"
+            path.write_bytes(b"SCE\x00" + bytes(60))
+            info = inspect_binary(path)
+            self.assertEqual(info["format"], "SELF/SCE")
+            self.assertNotIn("embedded_elf", info)
+
     def test_invalid_header_is_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "bad.elf"
