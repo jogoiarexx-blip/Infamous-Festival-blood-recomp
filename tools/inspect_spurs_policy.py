@@ -101,6 +101,39 @@ def main() -> None:
     print(f"TOTAL_ALVOS_AUSENTES: {len(dangling)}")
     print(f"PRIMEIROS_ENDERECOS_UNSUPPORTED: {[hex(a) for a in sorted(snippets)[:12]]}")
     print(f"ULTIMOS_ENDERECOS_UNSUPPORTED: {[hex(a) for a in sorted(snippets)[-12:]]}")
+    # Focused control-flow diagnostic: an unresolved *external* LS jump may
+    # still be legitimate (local store extends to 0x3FFFF, not just raw image).
+    sys.path.insert(0, str(sdk_tools))
+    from spu_disasm import disassemble_spu
+
+    insns = disassemble_spu(data, base_addr=LS_BASE)
+    active_funcs = [(int(s), int(e)) for s, e in d.get("functions", [])]
+
+    def owner(addr: int) -> str:
+        return ", ".join(
+            f"0x{s:X}..0x{e:X}" for s, e in active_funcs if s <= addr < e
+        ) or "FORA DAS FUNCOES TRADUZIDAS"
+
+    print("\n=== PONTOS ESPECIFICOS (RESUMO SEGURO) ===")
+    for addr in (0x15C0, 0x15D0, 0x15E0, 0x15F0):
+        ins = next((item for item in insns if item.addr == addr), None)
+        if ins is not None:
+            print(f"OPCODE_0x{addr:X}: {ins.mnemonic} | funcao={owner(addr)}")
+
+    raw_tail = 0x3FEC0
+    print(f"ALVO_0x{raw_tail:X}_DENTRO_DO_LOCAL_STORE: {raw_tail < 0x40000}")
+    for ins in insns:
+        if ins.mnemonic in ("br", "bra", "brsl", "brasl",
+                            "brz", "brnz", "brhz", "brhnz"):
+            if ins.operands.lower().split(",")[-1].strip() == f"0x{raw_tail:x}":
+                print(f"ORIGEM_ALVO_0x{raw_tail:X}: "
+                      f"0x{ins.addr:X} {ins.mnemonic} {ins.operands}"
+                      f" | funcao={owner(ins.addr)}")
+    for i in insns:
+        if 0x15A0 <= i.addr < 0x1610:
+            print(f"VIZINHO_0x{i.addr:X}: {i.mnemonic} {i.operands}"
+                  f" | funcao={owner(i.addr)}")
+    print("FIM_RESUMO_SPURS")
     print("RELATORIO_LOCAL:", report)
     print("AVISO: diagnostico somente; nenhuma politica SPURS foi integrada ao EXE.")
     print("NAO PUBLICAR: out/spurs-policy-probe, out/spu-misses ou binarios do jogo.")
