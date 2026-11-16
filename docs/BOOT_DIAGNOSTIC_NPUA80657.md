@@ -153,3 +153,20 @@ A inspeção local de `out/build/generated_spu/inventory.json` mostrou `diagnost
 O lifter reportou **213 instruções não suportadas, todas `.word`**. Os endereços variam de **0xB2A4** até **0xC20C**; **0 ocorrências antes de 0xB2A4**. Há falsas entradas candidatas até `0xC244`, por exemplo `0xC1F0..0xC22C`. Várias palavras contêm texto legível (`edge`, `zlib`), sugerindo que a área foi erroneamente disassemblada como instruções.
 
 **Hipótese forte:** sufixo de dados/strings dentro da região PF_X do SPU ELF. O `spu_lifter.py` possui `--code-end`, mas o pipeline `build_spu_workloads.py --input` ainda não oferece parâmetro para repassá-lo. **Não usar automaticamente 0xB2A4 como corte** até conferir se alguma função legítima cruza a fronteira ou se existem alvos reais de chamadas/saltos posteriores. Validar esses dois pontos antes de modificar a geração, para evitar exclusão de código real. Nenhum código ou asset do jogo foi publicado.
+
+## Verificação adicional de fronteira — 2026-11-16
+
+O usuário examinou `diagnostics.functions`, `call_targets` e `branch_targets` com candidato de corte `0xB2A4` e obteve:
+
+```text
+ENTRY: 0x3050
+FUNCOES CRUZANDO LIMITE: [('0xb290', '0xb2b0')]
+ULTIMAS ANTES: [('0xb178','0xb1b0'), ..., ('0xb260','0xb290'), ('0xb290','0xb2b0')]
+FUNCOES APOS: 39
+CHAMADAS APOS: ['0x17190', '0x22614']
+SALTOS APOS: ['0x1bf60','0x1f69c','0x2a41c','0x2bd2c',...]
+```
+
+O relatório indica que cortar em `0xB2A4` **atravessaria uma função detectada** e excluiria 39 outras candidatas. Os alvos mostrados a partir desse limite estão acima do fim das funções listadas (até `0xC244`), consistentemente com interpretação indevida de dados, mas ainda não é prova de que nenhum byte anterior é dado. Próximo passo: inspecionar **somente localmente** as instruções e o padrão ASCII nos bytes `0xB260..0xB2E0`, mais contagem exaustiva de targets dentro do intervalo `0xB2A4..0xC244`. Só então propor limite seguro para lifting.
+
+O `code.bin` do gerador mantém bytes da imagem SPU local e não pode ser comitado. Um script de inspeção local pode imprimir hex, mnemônicos e resumo de endereços sem publicar o binário.
