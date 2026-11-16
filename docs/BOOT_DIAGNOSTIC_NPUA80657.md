@@ -170,3 +170,21 @@ SALTOS APOS: ['0x1bf60','0x1f69c','0x2a41c','0x2bd2c',...]
 O relatório indica que cortar em `0xB2A4` **atravessaria uma função detectada** e excluiria 39 outras candidatas. Os alvos mostrados a partir desse limite estão acima do fim das funções listadas (até `0xC244`), consistentemente com interpretação indevida de dados, mas ainda não é prova de que nenhum byte anterior é dado. Próximo passo: inspecionar **somente localmente** as instruções e o padrão ASCII nos bytes `0xB260..0xB2E0`, mais contagem exaustiva de targets dentro do intervalo `0xB2A4..0xC244`. Só então propor limite seguro para lifting.
 
 O `code.bin` do gerador mantém bytes da imagem SPU local e não pode ser comitado. Um script de inspeção local pode imprimir hex, mnemônicos e resumo de endereços sem publicar o binário.
+
+## Teste isolado do limite SPU `--code-end 0xB2A4`
+
+O usuário executou uma experiência **local** com `spu_lifter.py --code-end 0xB2A4` em `out/spu-tail-test` (sem alterar fontes do SDK nem o EXE já compilado).
+
+```text
+[spu_lifter] code-end 0xB2A4: kept 622/661 bound(s), data tail left un-disassembled
+622 function(s) lifted
+37 call target(s)
+EXIT: 0
+UNSUPPORTED: {}
+MISSING_TARGETS: ['0x2bd2c']
+FUNCTIONS: 622
+```
+
+**Interpretação:** o limite removia toda a ocorrência de 213 pseudo-instruções `.word`, coerente com hipótese de strings e dados na cauda do segmento executável. **Ainda não valida a imagem**: o código gerado contém uma referência a `0x2BD2C` sem função traduzida com tal endereço. `spu_lifter.py` gera um stub de indireção para destinos ausentes, portanto esse resultado não é necessariamente uma falha de compilação, mas é um bloqueio de correção/execução.
+
+**Próximo teste:** usar o disassembler oficial na máquina local para identificar a instrução e o endereço de origem da referência `0x2BD2C`, junto com `executable_ranges` do inventory. Evitar integrar ao CMake ou desabilitar validações até classificar a referência como correta ou espúria.
