@@ -316,3 +316,23 @@ Com `infamous1.psarc_s` copiado para o caminho VFS solicitado, o usuário execut
 1. Rodar `tools/inspect_spurs_policy.py` (já publicado no repo) sobre o módulo RAW `B3523C4B17650EF8`, sem compilar/registrar prematuramente. Compartilhar só resumo de mnemônicos/limites, não binário.
 2. Verificar a estrutura da LFQueue e a origem do NID `0x8A85674D`, incluindo chamada e parâmetros, antes de adicionar HLE com comportamento real. Evitar retorno de sucesso falso.
 3. Verificar `all_shaders.xpps` e método RSX só após a conclusão das tarefas de inicialização, porque a tela preta pode ser consequência do bloqueio SPURS e da ausência de recursos.
+
+## RAW policy SPURS: primeira tradução experimental — 16/11/2026
+
+O usuário executou `py tools/inspect_spurs_policy.py` e confirmou fingerprint do raw `B3523C4B17650EF8`, `11904 bytes`, base LS `0xA00`.
+
+```text
+Text segment: va=0xA00 .. 0x3880 (11904 bytes, 2976 instructions)
+15 data function-pointer-table target(s)
+194 unique function starts, 194 function(s) lifted
+Function coverage: 8996 / 11904 bytes (75.6%)
+8 bi $r0 computed-jump sites, 15 non-r0 link-register returns
+UNSUPPORTED: {'.word': 4}
+ALVOS_AUSENTES: ['0x3fec0']
+ENTRADA_A00: True
+PRIMEIROS_ENDERECOS_UNSUPPORTED: ['0x15c0', '0x15d0', '0x15e0', '0x15f0']
+```
+
+**Importante:** `0x3FEC0` está fora do blob carregado (`0xA00..0x3880`), **mas dentro do local store SPU** (`0x0..0x3FFFF`). É possível ser salto intencional para código/área do kernel ou referência errada gerada pelo detector; não descartar sem inspecionar a instrução de origem. As quatro `.word` separadas por `0x10` bytes podem indicar dados de vetores incrustados no meio do código, mas não está demonstrado. Não usar `--code-end 0x15C0`, porque executável identificado se estende para endereços posteriores, incluindo `0x3504`.
+
+O script [`tools/inspect_spurs_policy.py`](../tools/inspect_spurs_policy.py) foi **atualizado** para mostrar intervalos de funções associados às quatro `.word`, vizinhança de mnemônicos em `0x15A0..0x1610` e origens do salto `0x3FEC0` dentro ou fora de funções traduzidas. Não captura nem publica dados originais, somente exibe diagnósticos localmente. Executar a versão atualizada para distinguir dados de código e salto de kernel de referência espúria. O primeiro SPU já integrado permanece inalterado; nenhum segundo SPU foi compilado/registrado.
