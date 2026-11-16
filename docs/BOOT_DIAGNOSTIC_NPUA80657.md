@@ -202,3 +202,20 @@ ORIGENS_DO_SALTO: [('0xb294', 'brz', '$r83, 0x2BD2C')]
 O **único destino pendente** identificado no teste limitado em `0xB2A4` vem da instrução `brz` em `0xB294`; `0x2BD2C` fica fora da faixa executável do arquivo SPU, mas ainda pertence ao espaço de endereçamento possível do local store. Não assumir que é salto legítimo nem que é sempre erro de CPU. A instrução fica dentro da função candidata `0xB290..0xB2B0`, que começou imediatamente após `0xB260..0xB290`. **Hipótese forte:** a detecção de função em `0xB290` é falsa devido à região de dados.
 
 Próxima validação **sem alterar o SDK**: testar `spu_lifter --code-end 0xB290` numa nova pasta `out/spu-tail-test-b290` e confirmar `unsupported={}`, destinos pendentes vazios e preservação da entrada `0x3050`. Isso **não prova jogabilidade**, e um corte só será incorporado depois de confirmar que os control flows legítimos não entram nessa área. Nenhum arquivo de jogo é publicado.
+
+## Compilação com o primeiro ELF SPU — evidência local (16/11/2026)
+
+Após executar `tools/prepare_spu_elf.py`, o usuário confirmou `SUCESSO: SPU ELF preparado e registrado localmente`, `621` funções, nenhuma instrução não suportada e nenhum destino direto ausente. O CMake foi reconfigurado para usar `out/port/spu` e `PORT_SPU_INPUTS` vazio.
+
+O log de compilação enviado termina com:
+
+```text
+out/port/spu/spu_workloads.c: ... warning: declaration requires a global constructor
+93 warnings generated.
+[4/5] Linking CXX executable MyGameRecomp.exe
+D:\infamous recomp\Infamous-Festival-blood-recomp-main>
+```
+
+Não há erro fatal ou falha de linker nas linhas recebidas. O terminal voltou ao prompt depois do link; **compilação aparentemente concluída com êxito**, sujeita a confirmação de data do EXE. As 93 mensagens são advertências de compilação, não prova de erro.
+
+**Próximos passos:** conferir a presença e data de `out/build/MyGameRecomp.exe` e executar um teste de boot redirecionando stdout/stderr a `out/boot_spu.log`. Verificar se o fingerprint ELF `00E729804474449A` ainda mostra `async dispatch MISS`, se o módulo SPURS raw `B3523C4B17650EF8` permanece `PM NOT LIFTED`, se o VFS continua falhando e se há progressão além de `sys_process_exit(code=0)`. Não declarar o jogo jogável sem esses dados. Logs de diagnóstico podem ser compartilhados após revisar dados privados; não publicar EBOOT, `.bin`, PSARC ou C gerado.
