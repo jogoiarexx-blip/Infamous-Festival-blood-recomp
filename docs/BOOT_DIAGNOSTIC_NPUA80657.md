@@ -188,3 +188,17 @@ FUNCTIONS: 622
 **Interpretação:** o limite removia toda a ocorrência de 213 pseudo-instruções `.word`, coerente com hipótese de strings e dados na cauda do segmento executável. **Ainda não valida a imagem**: o código gerado contém uma referência a `0x2BD2C` sem função traduzida com tal endereço. `spu_lifter.py` gera um stub de indireção para destinos ausentes, portanto esse resultado não é necessariamente uma falha de compilação, mas é um bloqueio de correção/execução.
 
 **Próximo teste:** usar o disassembler oficial na máquina local para identificar a instrução e o endereço de origem da referência `0x2BD2C`, junto com `executable_ranges` do inventory. Evitar integrar ao CMake ou desabilitar validações até classificar a referência como correta ou espúria.
+
+## Origem do salto externo (confirmação do usuário)
+
+Inspeção de `image.elf` do programa SPU capturado, usando `find_spu_functions.text_image` + `spu_disasm.disassemble_spu`:
+
+```text
+BASE: 0x3000
+FAIXAS_EXECUTAVEIS: [('0x3000', '0xc350')]
+ORIGENS_DO_SALTO: [('0xb294', 'brz', '$r83, 0x2BD2C')]
+```
+
+O **único destino pendente** identificado no teste limitado em `0xB2A4` vem da instrução `brz` em `0xB294`; `0x2BD2C` fica fora da faixa executável do arquivo SPU, mas ainda pertence ao espaço de endereçamento possível do local store. Não assumir que é salto legítimo nem que é sempre erro de CPU. A instrução fica dentro da função candidata `0xB290..0xB2B0`, que começou imediatamente após `0xB260..0xB290`. **Hipótese forte:** a detecção de função em `0xB290` é falsa devido à região de dados.
+
+Próxima validação **sem alterar o SDK**: testar `spu_lifter --code-end 0xB290` numa nova pasta `out/spu-tail-test-b290` e confirmar `unsupported={}`, destinos pendentes vazios e preservação da entrada `0x3050`. Isso **não prova jogabilidade**, e um corte só será incorporado depois de confirmar que os control flows legítimos não entram nessa área. Nenhum arquivo de jogo é publicado.
