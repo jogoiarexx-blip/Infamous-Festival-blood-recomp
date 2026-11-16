@@ -30,7 +30,8 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [ ] Comparar os 302 imports do jogo com os handlers disponíveis e verificar eventuais funções HLE faltantes.
 - [ ] Descobrir e tratar trabalho SPU de modo incremental.
 - [x] Configuração CMake e compilação/link inicial em Windows sem erro fatal relatado: `[200/201] Linking CXX executable MyGameRecomp.exe`; prompt retornou (448 avisos). **Arquivo confirmado pelo usuário** em `out/build/MyGameRecomp.exe` (515.762.176 bytes, 16/11/2026 14:59).
-- [ ] Executar smoke test de boot local e registrar logs sem assets distribuídos.
+- [x] Executar primeiro teste de boot local: runner entrou no PPU, inicializou runtime/threads/SPURS/GCM/FIOS e encerrou com `sys_process_exit(code=0)` **sem chegar ao menu** (log fornecido em 2026-11-16).
+- [ ] Corrigir bloqueios de boot confirmados: [SPU não recompilado, assets ausentes no VFS e metadados](BOOT_DIAGNOSTIC_NPUA80657.md).
 
 **Gate:** executável local inicia pipeline de runtime com logs; não implica jogo rodando.
 
@@ -62,4 +63,4 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [ ] Testes em máquinas Windows diferentes.
 
 ## Próximo checkpoint
-**Objetivo imediato:** compilação e link C++ concluídos com `out/build/MyGameRecomp.exe` confirmado (515.762.176 bytes). Testar o boot local com `private\\game\\EBOOT.elf` e coletar logs para corrigir runtime, HLE/SPU e arquivos. Três avisos de continuação em `0x0096FF68` permanecem pendentes. Jogo não está validado como jogável.
+**Objetivo imediato:** primeiro boot executado e log analisado. O runtime iniciou código recompilado, GCM, SPURS e múltiplas threads, mas houve **SPU async dispatch MISS** (`fp=0x00E729804474449A`, tamanho 38100), workloads não traduzidos (`fp=0xB3523C4B17650EF8`, tamanho 11904) e acessos a arquivos não encontrados. Próximo passo: coletar dumps de SPU localmente com `SPU_DUMP_MISS`, investigar VFS e mapear imagens SPU. Ver [diagnóstico](BOOT_DIAGNOSTIC_NPUA80657.md). O menu e jogabilidade ainda não foram alcançados.
