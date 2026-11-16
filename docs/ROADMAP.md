@@ -25,7 +25,7 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 ## Fase 2 — Pipeline de recompilação
 - [ ] Preparar ambiente Windows: Python, CMake, Ninja, clang-cl e SDK ps3recomp.
 - [x] Executar loader oficial no ELF do proprietário: 16.578 OPD, 14.789 funções, 302 imports/21 bibliotecas (log verificado em 2026-11-16).
-- [ ] Executar lifter PPU e registrar total de funções traduzidas/falhas.
+- [x] Executar lifter PPU com `--functions` e `--hle-stubs`: 40.085 entradas traduzidas, 12.848 wrappers e 32 arquivos C++ gerados localmente. **Três avisos de continuação pendentes**; ver [relatório](PPU_LIFT_RESULT_NPUA80657.md).
 - [ ] Gerar mapeamento HLE, identificar funções de sistema faltantes.
 - [ ] Descobrir e tratar trabalho SPU de modo incremental.
 - [ ] Criar compilação local determinística e smoke test sem assets distribuídos.
@@ -60,4 +60,4 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [ ] Testes em máquinas Windows diferentes.
 
 ## Próximo checkpoint
-**Objetivo imediato:** loader oficial ps3recomp **executado com sucesso** no computador do proprietário, confirmando 16.578 descritores OPD, 14.789 endereços distintos e 302 imports em 21 bibliotecas. Próximo passo: executar o **lifter PPU** com `--functions` e `--hle-stubs` e verificar geração de C++ local; depois SPU/HLE. Não reutilizar endereços ou hashes de inFAMOUS 2.
+**Objetivo imediato:** o lifter PPU **concluiu a geração** de 40.085 entradas em 32 arquivos C++ no computador do proprietário. Próximo passo: gerar tabela HLE, verificar compiladores Windows, configurar e tentar compilar localmente; investigar três avisos de continuação em `0x0096FF68`. Ainda não há executável jogável nem boot validado.
