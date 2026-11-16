@@ -336,3 +336,27 @@ PRIMEIROS_ENDERECOS_UNSUPPORTED: ['0x15c0', '0x15d0', '0x15e0', '0x15f0']
 **Importante:** `0x3FEC0` está fora do blob carregado (`0xA00..0x3880`), **mas dentro do local store SPU** (`0x0..0x3FFFF`). É possível ser salto intencional para código/área do kernel ou referência errada gerada pelo detector; não descartar sem inspecionar a instrução de origem. As quatro `.word` separadas por `0x10` bytes podem indicar dados de vetores incrustados no meio do código, mas não está demonstrado. Não usar `--code-end 0x15C0`, porque executável identificado se estende para endereços posteriores, incluindo `0x3504`.
 
 O script [`tools/inspect_spurs_policy.py`](../tools/inspect_spurs_policy.py) foi **atualizado** para mostrar intervalos de funções associados às quatro `.word`, vizinhança de mnemônicos em `0x15A0..0x1610` e origens do salto `0x3FEC0` dentro ou fora de funções traduzidas. Não captura nem publica dados originais, somente exibe diagnósticos localmente. Executar a versão atualizada para distinguir dados de código e salto de kernel de referência espúria. O primeiro SPU já integrado permanece inalterado; nenhum segundo SPU foi compilado/registrado.
+
+## Segundo SPURS: origem dos falsos opcodes e destino SMC esclarecidos
+
+O usuário retornou inspeção localizada:
+
+```text
+OPCODE_0x15C0: .word | função 0x15C0..0x15C8
+OPCODE_0x15D0: .word | função 0x15D0..0x15D8
+OPCODE_0x15E0: .word | função 0x15E0..0x15E8
+OPCODE_0x15F0: .word | função 0x15F0..0x15F8
+0x15C8: 0x5757534A ("WWSJ")
+0x15D8: 0xAAAABBBB
+ALVO_0x3FEC0_DENTRO_DO_LOCAL_STORE: True
+ORIGEM_ALVO_0x3FEC0: 0xA80 brasl $r79, 0x3FEC0
+ORIGEM_ALVO_0x3FEC0: 0xACC brasl $r79, 0x3FEC0
+```
+
+O próprio SDK upstream em `runtime/spu/spu_channels.c` tem **`spu_smc_microstep`**, com comentário documentando rotinas geradas dinamicamente em LS `0x3FEC0` (save/restore de registradores) e fallback pelo `spu_indirect_branch`. Isso muda a classificação de `0x3FEC0`: é um **destino externo especial esperado**, não motivo automático de rejeição do lift. A execução depende de os bytes SMC serem realmente gerados na LS antes de saltar.
+
+As quatro pequenas funções `0x15C0..0x15F8` são provavelmente **metadados WWSJ embutidos**, não funções. Não é correto desabilitar apenas `.word` nem cortar todo código após `0x15C0`.
+
+**Avanço de engenharia publicado:** [`tools/prepare_spurs_policy.py`](../tools/prepare_spurs_policy.py) confere hash FNV do raw capturado, marcadores WWSJ, intervalos exatos, ausência de referências diretas de código preservado às quatro entradas falsas e suporte do SDK ao interpretador SMC `0x3FEC0`. Se passar, faz o lifting preservando as outras **190 funções**, exigindo `unsupported={}` e somente `0x3FEC0` externo; debasa includes e registra a policy com **image_id=2** via o hook opcional `jobmods_register.c` do template (apenas nome do hook; comentário esclarece ser policy). Todos arquivos derivados e dump permanecem em `out/` e ignorados pelo Git.
+
+**Próximo teste do usuário:** baixar `tools/prepare_spurs_policy.py`, executar, preservar EXE anterior, reconfigurar CMake e compilar localmente apenas se as validações passarem. Depois testar em log `PM resolved`, `pm-end`, `BRANCH-TO-0`, `EventFlagWait`, com a cautela de que registro não prova execução funcional. Se a preparação falhar por salto para as pseudo-funções, não forçar o filtro.
