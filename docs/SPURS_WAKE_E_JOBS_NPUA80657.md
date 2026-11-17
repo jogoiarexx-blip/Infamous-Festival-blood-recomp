@@ -99,6 +99,13 @@ Nota: o perfilador de PC (`PS3_SAMPLE`) atribui nomes de função errados a cód
 - **Resultado.** Antes ~1 em 3 execuções bloqueava; agora 0 em 26 execuções. Sem o poke de diagnóstico, o jogo chega a ler `load_menu_catalog.log` e fecha o Bink, mas a janela continua com o aviso apagado (1 draw): o nó `ugc_message` das seções 7/7b era, ao menos em parte, esse mesmo bloqueio.
 - **Novo ponto de parada.** Depois de `load_menu_catalog.log` há 12 `garbage vcall` com `this=NULL`, vindos de `func_000BFBE4` chamada por `func_000B7CEC` (lista de nós do gerenciador de jobs, campo `obj+0x24`). A thread principal passa a girar em `func_003A9C84` (espera por barreira de lanes de SPU, `func_00581140`) em ~120 consultas/s.
 
+## 7f. Savedata: `PS3_USRDIR_BASE` e a tela "Installing..."
+
+- **Bug de configuração, não de código.** O jogo lê o ícone do savedata por `sys_fs` cru (`USRDIR/ui/xmb/savedata/icon.png`). Sem `PS3_USRDIR_BASE`, o `sys_fs` achata o caminho para `<raiz>/USRDIR/...`, que não existe, e o `AutoSave` falhava com `PARAM` (`size=0 buf=0`). O jogo entrava num laço infinito de "There was an error while loading/saving", exibindo a tela **"Installing..."** com o emblema (60 FPS, 9 draws). Com `PS3_USRDIR_BASE=private/PS3_GAME` o save grava `ICON0.PNG`, `STATE`, `PARAM.SFO` e `PARAM.PFD` e o laço termina. O launcher local passa a definir essa variável por padrão.
+- **Atenção ao testar.** Diretórios de savedata incompletos de execuções anteriores (só `PARAM.SFO`) fazem o jogo tentar carregar um `STATE` inexistente; apague-os (ou mova) antes de testar.
+- **Depois do save.** O jogo lê `load_menu_catalog.log`, as threads `SP Movie Loader/Player` e `Motion Controller Update` saem, e há 12 `garbage vcall` (`this=NULL`, ctr `0x101C0C6C`) com o nó `0x102E9FC0` (vtable `0x78B9D0`, campo `+0x50 = 0xFFFFFFFF`) passando por `func_000BFBE4`/`func_000B9C7C`. Em seguida `func_000B6C94` escreve em NULL (a base do array do gerenciador de jobs em `0x00A82DA0` fica 0) e as threads "Job Manager Event Handler" passam a receber de uma fila de id 0 (13 milhões de linhas de log). O guarda de vcall (`PPU_VCALL_BT=1`) agora também imprime a pilha guest.
+- **Limite do diagnóstico.** O nome de função dado pelo guarda (`func_000B7CEC`) vem de um endereço de retorno do host e pode estar errado por fusão de código idêntico; o ponto exato do vcall ainda não foi confirmado.
+
 ## 8. Pendências
 
 - Corrigir de verdade (sem poke) a conclusão do job `ugc_message...`: testar o estado de `cellNetCtl` (Disconnected em vez de erro) e a conclusão por erro do FIOS.
