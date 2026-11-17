@@ -1,6 +1,6 @@
 # inFAMOUS: Festival of Blood — recompilação para PC
 
-> **Estado: boot local executa PPU/SPURS/GCM; SPU liftado (política, tarefa, 2 jobs, RADG5) e wake da LFQueue corrigido em teste local; faltam arquivos do jogo no VFS. Menu ainda não alcançado. Não jogável.**
+> **Estado: o jogo já renderiza a primeira tela (aviso de epilepsia) em teste local, ~8 FPS; SPU/SPURS liftados (política, tarefa, jobs, RADG5, 27 módulos WWS). Menu ainda não alcançado. Não jogável.**
 
 Projeto comunitário e não oficial para estudar a viabilidade de uma recompilação estática de **inFAMOUS: Festival of Blood** (PlayStation 3) para PC, com base no ecossistema [ps3recomp](https://github.com/sp00nznet/ps3recomp).
 

@@ -63,4 +63,4 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [ ] Testes em máquinas Windows diferentes.
 
 ## Próximo checkpoint
-**Objetivo imediato:** completar os arquivos do jogo no VFS local. O bloqueio de SPURS/LFQueue foi resolvido localmente (ver [SPURS: wake, jobs e RADG5](SPURS_WAKE_E_JOBS_NPUA80657.md)): EventFlag não bloqueia mais, 2 jobs SPURS e a imagem SPU RADG5 estão liftados, e o boot chega à inicialização D3D12/RSX. Restam `null-call` no PPU, provavelmente por arquivos ausentes (`core.psarc`, `infamous2.psarc_s`, `lang_english.xpps`, ...). Menu e jogabilidade ainda não foram alcançados.
+**Objetivo imediato:** primeira tela do jogo atingida em teste local (aviso de epilepsia renderizado via D3D12, ~8 FPS) depois de liftar 27 módulos de job WWS embutidos no EBOOT; ver [SPURS: wake, jobs e RADG5](SPURS_WAKE_E_JOBS_NPUA80657.md). Próximos passos: desempenho, não determinismo de boot, telas seguintes (logos e menu), `null-call` do Job Manager Event Handler e áudio. Menu e jogabilidade ainda não alcançados.

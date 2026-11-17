@@ -20,8 +20,20 @@ Resultado: EventFlag deixa de bloquear; 79+ ciclos de `WAIT_SIGNAL` em 60 s (ant
 - Dois jobs SPURS brutos (1040 e 272 bytes, `fp=054414E2CCD626FF` e `64D9D14299A2B7AB`) foram capturados com `SPU_DUMP_MISS` e liftados com [tools/prepare_spurs_jobs.py](../tools/prepare_spurs_jobs.py). Resultado: 5247 `dispatch HIT`, 0 `MISS`.
 - A imagem SPU "RADG5" (ELF embutido no EBOOT, 101596 bytes, `fp=7117B11EE89D75F0`) foi extraída com `tools/extract_spu_images.py` e liftada com `tools/build_spu_workloads.py --input ... --image-ids`: 824 funções, sem `TODO`. O runtime registra a entrada.
 
-## 3. Pendências
+## 3. Módulos de job WWS embutidos no EBOOT (primeira imagem)
+
+Os jobs do `Wws_Job` (General, EdgeGeom, SpuLight) carregam módulos de código em LS `0x4000` a partir de endereços do próprio EBOOT (ex.: EA `0x8BD500`, descoberto com `SPU_DUMP_OVL=<dir>,0x4000`). Sem código liftado, o módulo roda no interpretador e nunca termina: a thread principal ficava em esperas de teardown (`SPU Light Task Kicker` nunca chegava ao estado 4) e a janela ficava preta.
+
+`tools/prepare_engine_jobmods.py` roda `lift_jobmods.py --engine-elf` do ps3recomp: **27 módulos, 0 instruções não suportadas** (imagens 200–226). Com isso:
+- `CLEAR_SURFACE` e `DRAW_ARRAYS` aparecem a cada frame (quads texturizados, atlas 512x256);
+- a janela D3D12 apresenta a **primeira tela real do jogo: o aviso de epilepsia** (ainda em fade-in), a ~8 FPS.
+
+Diagnóstico útil: `PS3_SAMPLE=5 PS3_SAMPLE_MAIN=1` (profiler de código guest; exige chamar `ps3_sampler_start()` em `main.cpp`), `PPU_WWATCH=<ea hex>`, `SPU_DUMP_MISS`, `SPU_DUMP_OVL`. O resultado varia entre execuções (uma em três travou cedo): há corrida de threads a investigar.
+
+## 4. Pendências
 
 - `null-call` no PPU ("Job Manager Event Handler") e leituras de NULL persistem; provável efeito de arquivos ausentes do VFS (`core.psarc`, `infamous2.psarc_s`, `patch*.psarc_s`, `all_shaders.xpps`, `lang_english.xpps`, ...). Copie a instalação completa do jogo para `private/`.
 - Métodos RSX "unknown" são ruído do despachante legado; só tratar quando houver draw com erro visual.
-- Não confirmado: execução correta do áudio RADG5 e qualquer saída de vídeo.
+- Desempenho (~8 FPS), fade-in/transições e as telas seguintes (logos, menu) ainda não verificados.
+- Execuções não determinísticas (uma em três travou cedo).
+- Não confirmado: execução correta do áudio RADG5.
