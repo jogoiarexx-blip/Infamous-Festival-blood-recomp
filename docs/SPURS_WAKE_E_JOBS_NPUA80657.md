@@ -50,6 +50,13 @@ Achados (teste local, build -O1, ~100 FPS):
 - Forçar o estado 4 (`PPU_POKE_ADDR=AE2A18 PPU_POKE_VAL=4`) ou o sentinela (`AE2800=FFFF0000`) **não** mudou a tela, então a espera não é a única barreira (há outros kickers, p.ex. "Edge Geom Task Kicker" em `0xAE2C00`).
 - Hipóteses em aberto: o consumo/retorno de jobs do SpuLight não completa (a lista do workload em `0xB51E00` é inicializada com `0xFFFF` e só é consultada pelo PM); ou o alpha baixo seria um erro de renderização (shader/formato `0x85`) e não de estado.
 
+
+### 5.1 O render não é a causa (verificado)
+
+- A tela fica **idêntica por 72 s** (fundo `(0,0,25)`, texto com brilho máx. 10/255, medido capturando a janela a cada 6 s).
+- Os vértices do texto estão certos: posições plausíveis (quads de ~30x33 px, `VTX_POS`), cor `ubyte4` clara (`VP_ATTRS_DUMP`), draw args normais (`DRAWARGS`). O fragment shader de 16 instruções (`FP_DUMP`) multiplica a cor por fatores vindos de `tc1`/`tc2` do vertex shader (constantes de fade/recorte), logo o alpha baixo é entrada do jogo, não erro de formato de textura.
+- O toggle por frame do estado do motor (`0xA7AF30`, escrito por `func_0008A8B8`) ocorre só **40 vezes** nos primeiros segundos e depois para (`PPU_WWATCH=A7AF30 PPU_WWATCH_MAX=0`). Ou seja, o loop de lógica do jogo **congela depois de ~20 frames**; os flips continuam porque vêm de outra thread. O congelamento é a espera do fim de frame pelo "SPU Light Task Kicker" (seção acima).
+
 Ferramentas úteis (SDK): `PS3_SAMPLE=5 PS3_SAMPLE_MAIN=1`, `PS3_SCTRACE=1`, `PPU_WWATCH`, `PPU_CASWATCH`, `SPU_ATOM_EA=0x…`, `SPU_ATOMTRACE`, `SPU_INTERP_STATS`, `GCM_FLIPCOUNT=1`, `PPU_POKE_ADDR` (valor fabricado, só diagnóstico).
 
 ## 6. Pendências
