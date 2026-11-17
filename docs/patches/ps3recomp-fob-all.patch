@@ -365,7 +365,15 @@
  /* An event flag the runtime makes for a guest object (no attribute block),
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
-@@ -2982,7 +2982,7 @@
+@@ -48,6 +48,7 @@
+ #include <unistd.h>
+ #endif
+ extern "C" uint32_t ppu_prof_resolve_host(void* ra);
++extern "C" { uint32_t g_ps3_ro_lo = 0, g_ps3_ro_hi = 0; }   /* main ELF code segment: DMA/host writes there are invalid */
+ 
+ /* Resolve the GUEST function on the host stack (closest lifted entry below
+  * each frame) -- the same trick the [BLOCK] profiler uses. */
+@@ -2982,7 +2983,7 @@
              static int _gn = 0;
              if (PS3_LOG_FIRST(_gn, 12)) fprintf(stderr, "[ppu] garbage vcall -> 0x%08X this=0x%08X (uninit/stale object) -- no-op, r3=0\n", tgt, (uint32_t)ctx->gpr[3]);
  #ifdef _WIN32
@@ -374,3 +382,47 @@
                  char* mb=(char*)GetModuleHandleA(0); void* bt[26]; unsigned short fr=RtlCaptureStackBackTrace(0,26,bt,0);
                  char ln[820]; int p=snprintf(ln,sizeof ln,"      GVBT this=0x%08X r2=0x%08X lr=0x%08X rva:",(uint32_t)ctx->gpr[3],(uint32_t)ctx->gpr[2],(uint32_t)ctx->lr);
                  for(int i=0;i<fr;i++) p+=snprintf(ln+p,sizeof(ln)-p," %llX",(unsigned long long)((char*)bt[i]-mb));
+@@ -3653,6 +3654,8 @@
+         if (p_memsz > p_filesz)
+             memset(vm_base + (uint32_t)p_vaddr + (uint32_t)p_filesz, 0, (size_t)(p_memsz - p_filesz));
+         g_ppu_image_ranges.push_back({p_vaddr, p_vaddr + (p_memsz > p_filesz ? p_memsz : p_filesz)});
++        { uint32_t pf = be32(ph + 4);   /* PF_X without PF_W: read-only code + jump tables */
++          if ((pf & 1u) && !(pf & 2u) && !g_ps3_ro_hi) { g_ps3_ro_lo = (uint32_t)p_vaddr; g_ps3_ro_hi = (uint32_t)(p_vaddr + p_memsz); } }
+         loaded++;
+     }
+     free(file);
+--- a/runtime/spu/spu_dma.h
++++ b/runtime/spu/spu_dma.h
+@@ -143,6 +143,7 @@
+     return (cmd & 0x40) != 0; /* GET family has bit 6 set */
+ }
+ 
++extern uint32_t g_ps3_ro_lo, g_ps3_ro_hi;
+ static inline int mfc_is_put(uint32_t cmd)
+ {
+     return (cmd & 0x20) != 0 && !mfc_is_get(cmd);
+@@ -265,7 +266,12 @@
+           int malformed = (size == 0) || (size > 0x4000)
+                        || (size >= 16 && (size & 15))
+                        || (((lsa ^ (uint32_t)ea) & 15) != 0)
+-                       || (mfc_is_put(cmd) && (uint32_t)ea < 0x10000u);
++                       || (mfc_is_put(cmd) && (uint32_t)ea < 0x10000u)
++                       /* ...and one into the title's read-only code segment (instructions and the
++                        * jump tables inside it): the MFC faults there on hardware. A video decoder
++                        * whose frame buffer pointer was still zero filled 0x10000..0xE1000 with
++                        * black and turned a jump table into 0x10101010. */
++                       || (mfc_is_put(cmd) && g_ps3_ro_hi && (uint32_t)ea < g_ps3_ro_hi && (uint32_t)ea + size > g_ps3_ro_lo);
+           if (malformed) {
+               static int _n = 0;
+               if (PS3_LOG_FIRST(_n, 8))
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -2747,7 +2747,7 @@
+         s_d3d.device, &pd, &IID_ID3D12PipelineState, (void**)&pso);
+     pb->lpVtbl->Release(pb);
+     if (FAILED(hr)) {
+-        static int _e3=0; if (PS3_LOG_FIRST(_e3, 16)) printf("[FP] PSO FAIL (fp=0x%08X, 0x%08lX)\n", fp_addr, hr);
++        static int _e3=0; if (PS3_LOG_FIRST(_e3, 16)) printf("[FP] PSO FAIL (fp=0x%08X, 0x%08lX) removedReason=0x%08lX\n", fp_addr, hr, (long)s_d3d.device->lpVtbl->GetDeviceRemovedReason(s_d3d.device));
+         return NULL;
+     }
+     { static int _ok=0; if (PS3_LOG_FIRST(_ok, 32)) printf("[FP] guest FP pipeline ready (fp=0x%08X)\n", fp_addr); }
