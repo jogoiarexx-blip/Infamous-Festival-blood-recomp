@@ -69,9 +69,16 @@ Medido com `PPU_WWATCH`, `SPU_DMATRACE=5` e depuração temporária nas funçõe
 
 Nota: o perfilador de PC (`PS3_SAMPLE`) atribui nomes de função errados a código SPU lifado (aqui apontou `spu_LS_00006CB4`, que nunca é chamada); confie nele só por módulo.
 
+## 7b. Teste decisivo: soltar o nó destrava o jogo
+
+- O laço `func_000B4A2C` sai quando as três filas do gerenciador (`mgr=0x00A7B4C0`, heads em `+0x3D0/+0x3D8/+0x3E0`) estão vazias. O gerenciador é estático.
+- Teste de diagnóstico (estado fabricado, não é correção): `PPU_POKE_ADDR=0xA7B898 PPU_POKE_VAL=0 PPU_POKE_MS=12000` zera o head da fila 1 aos 12 s. Resultado: o jogo sai da espera, fecha o Bink, abre `load_menu_catalog.log`, os PSARC de texto e passa a **desenhar uma tela nova** (a tela de carregamento com o emblema, `draws: 8`, ~33 FPS). Logo, esse nó é o único portão entre o aviso e o carregamento.
+- Depois do poke aparecem muitos `garbage vcall` (objeto liberado sendo usado), esperado por ser estado fabricado.
+- As threads do jogo ficam todas ociosas (amostrador: `guest=0`); o nó espera por algo que nunca chega. Há duas hipóteses abertas: a falha de `open` do `ugc_message.sprig.xpps_a` (conteúdo de usuário, em geral baixado) não completa a operação do FIOS, ou a rede (`cellNetCtl GetState` devolve NOT_INITIALIZED no modo offline) deixa o carregamento sem desfecho.
+
 ## 8. Pendências
 
-- Identificar a dependência do job `ugc_message...` e fazer a thread principal sair da espera; só então os frames do vídeo/logos podem ser desenhados.
+- Corrigir de verdade (sem poke) a conclusão do job `ugc_message...`: testar o estado de `cellNetCtl` (Disconnected em vez de erro) e a conclusão por erro do FIOS.
 - Esporadicamente (1 em 3 execuções) a thread principal bloqueia cedo num `cellSpursEventFlagWait` (padrão `0x0002`, flag `0x10482B00`).
 - Os `null-call` do "Job Manager Event Handler" continuam.
 - Áudio e a cobertura de demais imagens SPU não verificados.
