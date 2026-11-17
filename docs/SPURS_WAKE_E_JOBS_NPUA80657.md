@@ -63,7 +63,9 @@ Medido com `PPU_WWATCH`, `SPU_DMATRACE=5` e depuração temporária nas funçõe
 - **O Bink decodifica de verdade.** O objeto Bink (`0x194971C0`) avança a ~31 quadros/s (contador em `+0x460`, `BinkWait` = `func_00771260`), e a RADG5 (imagem 5) faz GET da estrutura e PUT de linhas de `0xF00` bytes dos planos decodificados.
 - **Mas nada é desenhado depois do aviso.** Após os primeiros frames o jogo não envia mais draws (`DRAWARGS`); a janela só reapresenta o último buffer (~100 FPS), por isso a tela "dim" fica parada.
 - **A thread principal está presa no `func_000B4A2C`**, o laço de espera do gerenciador de jobs do motor (poll de `usleep(3)`, `PS3_POLLTOP`). Ele só sai quando as filas em `mgr+0x3D0..0x3E0` esvaziam (`mgr=0x00A7B4C0`). A fila 1 (`+0x3D8`) fica com um nó em voo: um job de carga de **`ugc_message.sprig.xpps_a`** (nó em `0x10CE....`, vtable `0x97A588`, nome em `+0x1C`) com contador de dependências `+0x10 = 1` que nunca zera. O `open` desse arquivo retorna `ENOENT` (0x80010006), o esperado numa instalação nova; criar o arquivo vazio não resolve (o FIOS apenas registra `failed reading header`).
-- Falta descobrir **qual job é a dependência** (estágios de `func_000B775C`/`func_000B7568`) e por que ela não completa.
+- Despejando todas as filas do gerenciador (`mgr+0x3D0..0x3FC`, laços `+0x14`) só existe esse nó (estado 1, `dep=1`); as demais filas estão vazias. A dependência é, portanto, **externa** às filas deste gerenciador (outro gerenciador, thread ou callback assíncrono).
+- O `open` falha em threads "fios mediathread" (a falha vem de `func_0059F494`/`func_005900E0`, código do FIOS). Um PSARC mínimo válido (32 bytes, 0 entradas, preenchido a 64 KB) deixa o FIOS aceitar o arquivo (some o `failed reading header`), mas o nó continua em voo. Não é só a ausência do arquivo.
+- Os métodos do nó são: destrutores (`0x68F5AC`/`0x68F5F8`) e `run` = `func_000B7CEC`, que é o laço de espera por conclusão (`ppu_timebase_now`).
 
 Nota: o perfilador de PC (`PS3_SAMPLE`) atribui nomes de função errados a código SPU lifado (aqui apontou `spu_LS_00006CB4`, que nunca é chamada); confie nele só por módulo.
 
