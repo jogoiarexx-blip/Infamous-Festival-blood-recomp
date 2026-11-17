@@ -39,10 +39,23 @@ Duas causas, medidas com `SPU_INTERP_STATS=5` e o profiler:
 
 Mais endereços de biblioteca podem aparecer em "top entries"; adicione-os à lista.
 
-## 5. Pendências
+## 5. Investigação: por que o aviso de epilepsia não avança
+
+Achados (teste local, build -O1, ~100 FPS):
+
+- O jogo **está em loop de frames** (a ~60–100 flips/s, `GCM_FLIPCOUNT=1`), mas o aviso fica com alpha baixo e estático por 70+ s.
+- A thread principal passa a maior parte do tempo no bloco de **fim de frame** de `func_001FF83C`, que espera (`func_0036B5A4`, poll com `usleep(10)`) o objeto "SPU Light Task Kicker" (`0xAE2700`) chegar ao **estado 4** (`+0x318`). O worker (thread `tid=5`, `func_0036B128`) percorre os estados 0→1→2→3 e para no 3.
+- A transição 3→4 exige `func_00582DC4(obj+0x100)` verdadeiro, isto é, o `u16` em `0xAE2800` valer `0xFFFF` (sentinela de "lista vazia" nas filas lock-free de índices `u16` do SPURS/WWS). Esse campo fica em `0` o tempo todo.
+- O código SPU (módulo WWS `d128…`, EA `0x8BD500`) faz GETLLAR/PUTLLC em `0xAE2800` o tempo todo (~1800 em 30 s, quase todos com sucesso): só incrementa contadores `u16` em `+2` e `+4` (até o limite `0x2D0`) e nunca toca em `+0`. O PPU só lê; `PPU_CASWATCH` e `PPU_WWATCH` não mostram escritas do PPU ali.
+- Forçar o estado 4 (`PPU_POKE_ADDR=AE2A18 PPU_POKE_VAL=4`) ou o sentinela (`AE2800=FFFF0000`) **não** mudou a tela, então a espera não é a única barreira (há outros kickers, p.ex. "Edge Geom Task Kicker" em `0xAE2C00`).
+- Hipóteses em aberto: o consumo/retorno de jobs do SpuLight não completa (a lista do workload em `0xB51E00` é inicializada com `0xFFFF` e só é consultada pelo PM); ou o alpha baixo seria um erro de renderização (shader/formato `0x85`) e não de estado.
+
+Ferramentas úteis (SDK): `PS3_SAMPLE=5 PS3_SAMPLE_MAIN=1`, `PS3_SCTRACE=1`, `PPU_WWATCH`, `PPU_CASWATCH`, `SPU_ATOM_EA=0x…`, `SPU_ATOMTRACE`, `SPU_INTERP_STATS`, `GCM_FLIPCOUNT=1`, `PPU_POKE_ADDR` (valor fabricado, só diagnóstico).
+
+## 6. Pendências
 
 - `null-call` no PPU ("Job Manager Event Handler") e leituras de NULL persistem; provável efeito de arquivos ausentes do VFS (`core.psarc`, `infamous2.psarc_s`, `patch*.psarc_s`, `all_shaders.xpps`, `lang_english.xpps`, ...). Copie a instalação completa do jogo para `private/`.
 - Métodos RSX "unknown" são ruído do despachante legado; só tratar quando houver draw com erro visual.
-- A tela do aviso de epilepsia fica **parada e escura** (alpha baixo) por 70+ s: o estado do jogo não avança dela. A instalação de dados termina e a thread principal continua ocupada (loop de jogo), então falta descobrir o que o jogo espera (tempo? evento? entrada?).
+- A tela do aviso de epilepsia fica parada e escura; ver a seção 5.
 - Execuções não determinísticas (uma em três travou cedo).
 - Não confirmado: execução correta do áudio RADG5.
