@@ -1,6 +1,6 @@
 # inFAMOUS: Festival of Blood — recompilação para PC
 
-> **Estado: fase 0 concluída, identificação NPUA80657; fase 1 em andamento: ELF64 analisado, OPD/TOC e imports identificados. Próximo passo: rodar loader ps3recomp localmente. Não jogável.**
+> **Estado: boot local executa PPU/SPURS/GCM; SPU liftado (política, tarefa, 2 jobs, RADG5) e wake da LFQueue corrigido em teste local; faltam arquivos do jogo no VFS. Menu ainda não alcançado. Não jogável.**
 
 Projeto comunitário e não oficial para estudar a viabilidade de uma recompilação estática de **inFAMOUS: Festival of Blood** (PlayStation 3) para PC, com base no ecossistema [ps3recomp](https://github.com/sp00nznet/ps3recomp).
 
