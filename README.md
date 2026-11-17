@@ -1,6 +1,6 @@
 # inFAMOUS: Festival of Blood — recompilação para PC
 
-> **Estado: o jogo já renderiza a primeira tela (aviso de epilepsia) em teste local, ~100 FPS; SPU/SPURS liftados (política, tarefa, jobs, RADG5, 27 módulos WWS). Menu ainda não alcançado. Não jogável.**
+> **Estado: o jogo renderiza o aviso de epilepsia completo a ~100 FPS em teste local e chega ao vídeo de splash (Bink); SPU/SPURS liftados (política, tarefa, jobs, RADG5, 27 módulos WWS). Menu ainda não alcançado. Não jogável.**
 
 Projeto comunitário e não oficial para estudar a viabilidade de uma recompilação estática de **inFAMOUS: Festival of Blood** (PlayStation 3) para PC, com base no ecossistema [ps3recomp](https://github.com/sp00nznet/ps3recomp).
 
