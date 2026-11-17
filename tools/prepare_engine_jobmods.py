@@ -17,11 +17,21 @@ generated sources in out/port/CMakeLists.txt, then re-run cmake and build.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+
+# Library routines (atomic add, DMA split, memset/memcpy) sit past each module's
+# "code_end" and are reached only through indirect calls, so the lifter does not
+# find them and they run in the SPU interpreter (~15M steps/s of one core, 58k
+# calls in 5 s). Seeding them extends the lifted span: ~8 -> ~44 FPS here.
+# Addresses are LS addresses for the NPUA80657 modules; find more with
+# SPU_INTERP_STATS=5 ("top entries"). Override with LBP_JOBMOD_EXTRA_FUNCS.
+DEFAULT_EXTRA_FUNCS = "0x9548,0x95D8,0x9690"
 
 
 def main() -> None:
@@ -41,8 +51,10 @@ def main() -> None:
         reg = stage / "jobmods_register.c"
         cmd = [sys.executable, str(tool), "--engine-elf", str(elf), "--out", str(stage),
                "--register", str(reg), "--symbol-prefix", "fobjm"]
-        print("+", " ".join(cmd), flush=True)
-        subprocess.run(cmd, check=True)
+        env = dict(os.environ)
+        env.setdefault("LBP_JOBMOD_EXTRA_FUNCS", DEFAULT_EXTRA_FUNCS)
+        print("+", " ".join(cmd), " (LBP_JOBMOD_EXTRA_FUNCS=%s)" % env["LBP_JOBMOD_EXTRA_FUNCS"], flush=True)
+        subprocess.run(cmd, check=True, env=env)
         modules = sorted(p for p in stage.glob("jobmod_*") if p.is_dir())
         if not modules or not reg.is_file():
             raise SystemExit("ERRO: nenhum módulo liftado.")

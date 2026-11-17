@@ -63,4 +63,4 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [ ] Testes em máquinas Windows diferentes.
 
 ## Próximo checkpoint
-**Objetivo imediato:** primeira tela do jogo atingida em teste local (aviso de epilepsia renderizado via D3D12, ~8 FPS) depois de liftar 27 módulos de job WWS embutidos no EBOOT; ver [SPURS: wake, jobs e RADG5](SPURS_WAKE_E_JOBS_NPUA80657.md). Próximos passos: desempenho, não determinismo de boot, telas seguintes (logos e menu), `null-call` do Job Manager Event Handler e áudio. Menu e jogabilidade ainda não alcançados.
+**Objetivo imediato:** primeira tela do jogo atingida em teste local (aviso de epilepsia renderizado via D3D12, ~100 FPS em build -O1) depois de liftar 27 módulos de job WWS embutidos no EBOOT; ver [SPURS: wake, jobs e RADG5](SPURS_WAKE_E_JOBS_NPUA80657.md). Próximos passos: descobrir por que a tela do aviso não avança, não determinismo de boot, telas seguintes (logos e menu), `null-call` do Job Manager Event Handler e áudio. Menu e jogabilidade ainda não alcançados.

@@ -30,10 +30,19 @@ Os jobs do `Wws_Job` (General, EdgeGeom, SpuLight) carregam módulos de código 
 
 Diagnóstico útil: `PS3_SAMPLE=5 PS3_SAMPLE_MAIN=1` (profiler de código guest; exige chamar `ps3_sampler_start()` em `main.cpp`), `PPU_WWATCH=<ea hex>`, `SPU_DUMP_MISS`, `SPU_DUMP_OVL`. O resultado varia entre execuções (uma em três travou cedo): há corrida de threads a investigar.
 
-## 4. Pendências
+## 4. Desempenho: 8 → ~100 FPS
+
+Duas causas, medidas com `SPU_INTERP_STATS=5` e o profiler:
+
+1. **Rotinas de biblioteca de cada módulo WWS rodavam no interpretador SPU.** Depois do `code_end` de cada módulo há memset/memcpy, atômicas e divisão de DMA, alcançadas só por chamadas indiretas, que o lifter não vê. Uma thread consumia um núcleo inteiro (15 M passos/s, ~58 mil chamadas em 5 s a `0x9690`). `tools/prepare_engine_jobmods.py` agora semeia `LBP_JOBMOD_EXTRA_FUNCS=0x9548,0x95D8,0x9690`; o interpretador caiu a ~0 passos/s e o FPS foi de ~8 para ~44.
+2. **Build em Debug (PPU em -O0).** Reconfigurar com `-DCMAKE_BUILD_TYPE=None` aplica o `-O1` do template (~12 min de compilação) e leva a ~100 FPS.
+
+Mais endereços de biblioteca podem aparecer em "top entries"; adicione-os à lista.
+
+## 5. Pendências
 
 - `null-call` no PPU ("Job Manager Event Handler") e leituras de NULL persistem; provável efeito de arquivos ausentes do VFS (`core.psarc`, `infamous2.psarc_s`, `patch*.psarc_s`, `all_shaders.xpps`, `lang_english.xpps`, ...). Copie a instalação completa do jogo para `private/`.
 - Métodos RSX "unknown" são ruído do despachante legado; só tratar quando houver draw com erro visual.
-- Desempenho (~8 FPS), fade-in/transições e as telas seguintes (logos, menu) ainda não verificados.
+- A tela do aviso de epilepsia fica **parada e escura** (alpha baixo) por 70+ s: o estado do jogo não avança dela. A instalação de dados termina e a thread principal continua ocupada (loop de jogo), então falta descobrir o que o jogo espera (tempo? evento? entrada?).
 - Execuções não determinísticas (uma em três travou cedo).
 - Não confirmado: execução correta do áudio RADG5.
