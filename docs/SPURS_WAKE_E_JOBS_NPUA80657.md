@@ -76,6 +76,15 @@ Nota: o perfilador de PC (`PS3_SAMPLE`) atribui nomes de função errados a cód
 - Depois do poke aparecem muitos `garbage vcall` (objeto liberado sendo usado), esperado por ser estado fabricado.
 - As threads do jogo ficam todas ociosas (amostrador: `guest=0`); o nó espera por algo que nunca chega. Há duas hipóteses abertas: a falha de `open` do `ugc_message.sprig.xpps_a` (conteúdo de usuário, em geral baixado) não completa a operação do FIOS, ou a rede (`cellNetCtl GetState` devolve NOT_INITIALIZED no modo offline) deixa o carregamento sem desfecho.
 
+## 7c. Rede e eventos do gerenciador de jobs (rodada seguinte)
+
+- **Rede descartada.** Com `cellNetCtlGetState` devolvendo OK (Disconnected) em vez de erro, o jogo continua travado no mesmo ponto.
+- **`ugc_message` não é FIOS.** A tentativa de abrir `ugc_message.sprig.xpps_a` (primeiro em `/dev_hdd0`, depois em `/dev_bdvd`) vem da thread do jogo "Splash movie Installation", que termina normalmente (`status=0`) mesmo com as duas falhas. O arquivo não existe em nenhum PSARC consultado, como se esperaria de conteúdo de usuário.
+- **Os "Job Manager Event Handler" (filas 1 e 2) recebem eventos do tipo errado.** O laço (`func_00580548`) lê `d2`: se a palavra alta (`d2>>32`) vale 1 chama o tratador em `obj+0x24`; caso contrário chama o callback em `obj+0x20`, que o jogo inicializa com NULL (`func_005806C8` recebe `r7=0`). Isso explica os `null-call` que eu tinha tratado como sem relação.
+- Eventos reais de job SPURS chegam pelo `spu_deliver_user_event` com `d1=0xFFFFFFFF53505501`, `d2=(porta<<32)|valor` e `d3=dado`. Com `d2>>32==1` (porta 1) o tratador correto seria chamado. Nesta execução **nenhum** evento real chega (contagem 0); só chegam os eventos sintéticos de `jc_signal_done` (`d2` = índice do job, palavra alta 0), que o jogo trata como callback NULL.
+- O job `0x64D9...` (272 B) é um "enviar evento": porta lida de `desc+0x34` (valor 0x10, fila 6) e dado em `desc+0x3C` (0xC0CAFEED). Ele não alimenta as filas 1/2.
+- A task 0 do taskset `0x10481200` fica dormindo em `WAIT_SIGNAL` por mais de 16 s: é o candidato a produzir o evento real de porta 1 que completa o nó. Falta descobrir em que objeto ela espera e quem deveria sinalizá-lo.
+
 ## 8. Pendências
 
 - Corrigir de verdade (sem poke) a conclusão do job `ugc_message...`: testar o estado de `cellNetCtl` (Disconnected em vez de erro) e a conclusão por erro do FIOS.
