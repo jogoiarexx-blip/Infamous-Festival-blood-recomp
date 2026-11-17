@@ -85,6 +85,13 @@ Nota: o perfilador de PC (`PS3_SAMPLE`) atribui nomes de função errados a cód
 - O job `0x64D9...` (272 B) é um "enviar evento": porta lida de `desc+0x34` (valor 0x10, fila 6) e dado em `desc+0x3C` (0xC0CAFEED). Ele não alimenta as filas 1/2.
 - A task 0 do taskset `0x10481200` fica dormindo em `WAIT_SIGNAL` por mais de 16 s: é o candidato a produzir o evento real de porta 1 que completa o nó. Falta descobrir em que objeto ela espera e quem deveria sinalizá-lo.
 
+## 7d. A fila LFQueue funciona; o segundo travamento
+
+- A task 0 do taskset `0x10481200` espera no objeto `0x10482B80` (a LFQueue de 12 posições de 32 bytes). Despejando a linha de 128 bytes a cada park, os índices avançam e dão a volta (pop e push em equilíbrio, 73 parks em 20 s): a fila **não** está travada, a task fica ociosa porque o PPU não empurra mais nada. O consumidor SPU e o `_cellSpursLFQueuePushBody` do HLE estão corretos para esse fluxo.
+- Nenhum evento de SPU para a porta 1 é emitido em momento algum (só `INTR 0x50000000`, porta 16, do job `0x64D9...`).
+- Com o poke que solta o nó (seção 7b) o jogo mostra a tela de carregamento e depois **trava de novo**: a thread principal fica na espera temporizada `func_000B5770` (poll de `usleep` ~257 mil chamadas/s, `lr=0x000B58A4`), tela do aviso apagada e só 1 draw. Ou seja, o problema não é um nó isolado: o gerenciador de jobs do motor não recebe as conclusões das suas tarefas.
+- Próximo passo: ler o que as chamadas de `_cellSpursLFQueuePushBody` do PPU enviam (mensagens de 32 bytes) e o que o SPU devolve por DMA, para achar a conclusão que o motor espera.
+
 ## 8. Pendências
 
 - Corrigir de verdade (sem poke) a conclusão do job `ugc_message...`: testar o estado de `cellNetCtl` (Disconnected em vez de erro) e a conclusão por erro do FIOS.
