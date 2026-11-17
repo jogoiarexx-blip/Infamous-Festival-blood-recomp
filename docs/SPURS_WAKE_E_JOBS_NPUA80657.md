@@ -56,11 +56,20 @@ O Bink usa a thread SPU "RADG5" (imagem 5), que o jogo cria com `sys_spu_thread_
 
 Com isso a RADG5 recebe os comandos do PPU (`port_send` na fila 7) e responde por `throw_event` na fila 8.
 
-## 7. Pendências
+## 7. Vídeo de splash: a decodificação funciona; a thread principal espera um job
 
-- O vídeo de splash ainda não aparece: o Bink lê só o primeiro bloco de 128 KB do arquivo e a tela fica no estado pós-aviso. Falta ver se a decodificação na RADG5 produz quadros e por que o IO não avança.
+Medido com `PPU_WWATCH`, `SPU_DMATRACE=5` e depuração temporária nas funções lifadas:
+
+- **O Bink decodifica de verdade.** O objeto Bink (`0x194971C0`) avança a ~31 quadros/s (contador em `+0x460`, `BinkWait` = `func_00771260`), e a RADG5 (imagem 5) faz GET da estrutura e PUT de linhas de `0xF00` bytes dos planos decodificados.
+- **Mas nada é desenhado depois do aviso.** Após os primeiros frames o jogo não envia mais draws (`DRAWARGS`); a janela só reapresenta o último buffer (~100 FPS), por isso a tela "dim" fica parada.
+- **A thread principal está presa no `func_000B4A2C`**, o laço de espera do gerenciador de jobs do motor (poll de `usleep(3)`, `PS3_POLLTOP`). Ele só sai quando as filas em `mgr+0x3D0..0x3E0` esvaziam (`mgr=0x00A7B4C0`). A fila 1 (`+0x3D8`) fica com um nó em voo: um job de carga de **`ugc_message.sprig.xpps_a`** (nó em `0x10CE....`, vtable `0x97A588`, nome em `+0x1C`) com contador de dependências `+0x10 = 1` que nunca zera. O `open` desse arquivo retorna `ENOENT` (0x80010006), o esperado numa instalação nova; criar o arquivo vazio não resolve (o FIOS apenas registra `failed reading header`).
+- Falta descobrir **qual job é a dependência** (estágios de `func_000B775C`/`func_000B7568`) e por que ela não completa.
+
+Nota: o perfilador de PC (`PS3_SAMPLE`) atribui nomes de função errados a código SPU lifado (aqui apontou `spu_LS_00006CB4`, que nunca é chamada); confie nele só por módulo.
+
+## 8. Pendências
+
+- Identificar a dependência do job `ugc_message...` e fazer a thread principal sair da espera; só então os frames do vídeo/logos podem ser desenhados.
 - Esporadicamente (1 em 3 execuções) a thread principal bloqueia cedo num `cellSpursEventFlagWait` (padrão `0x0002`, flag `0x10482B00`).
-- Os `null-call` do "Job Manager Event Handler" continuam; ainda não relacionados a travas.
+- Os `null-call` do "Job Manager Event Handler" continuam.
 - Áudio e a cobertura de demais imagens SPU não verificados.
-
-Ferramentas úteis (SDK): `PS3_SAMPLE=5 PS3_SAMPLE_MAIN=1`, `PS3_SCTRACE=1`, `PPU_WWATCH`, `PPU_CASWATCH`, `SPU_ATOM_EA=0x…`, `SPU_INTERP_STATS`, `GCM_FLIPCOUNT=1`, `VTX_POS`, `VP_ATTRS_DUMP`, `DRAWARGS`, `FP_DUMP`, `SPU_MBOXTRACE`, `SPU_DBG_MBOX`, `PPU_POKE_ADDR` (valor fabricado, só diagnóstico).

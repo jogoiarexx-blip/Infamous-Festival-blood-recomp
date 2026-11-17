@@ -63,4 +63,4 @@ Este documento registra **resultados verificáveis**, não porcentagens inventad
 - [ ] Testes em máquinas Windows diferentes.
 
 ## Próximo checkpoint
-**Objetivo imediato:** o jogo renderiza o aviso de epilepsia completo (fade-in, 4 s, fade-out) a ~100 FPS em build -O1 e chega ao vídeo de splash Bink; a thread SPU RADG5 agora roda e troca eventos com o PPU (ver [nota técnica](SPURS_WAKE_E_JOBS_NPUA80657.md)). Próximos passos: fazer o vídeo de splash decodificar e aparecer, depois logos e menu; investigar o bloqueio esporádico de EventFlag e os `null-call`. Menu e jogabilidade ainda não alcançados.
+**Objetivo imediato:** o aviso de epilepsia renderiza completo e o vídeo de splash Bink decodifica a ~31 quadros/s (RADG5 funcional), mas a thread principal fica esperando um job de carga (`ugc_message.sprig.xpps_a`) com dependência não resolvida, então nenhum quadro novo é desenhado (ver [nota técnica](SPURS_WAKE_E_JOBS_NPUA80657.md)). Próximo passo: achar e destravar essa dependência; depois logos e menu. Menu e jogabilidade ainda não alcançados.
