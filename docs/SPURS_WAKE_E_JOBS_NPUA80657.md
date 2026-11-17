@@ -92,6 +92,13 @@ Nota: o perfilador de PC (`PS3_SAMPLE`) atribui nomes de função errados a cód
 - Com o poke que solta o nó (seção 7b) o jogo mostra a tela de carregamento e depois **trava de novo**: a thread principal fica na espera temporizada `func_000B5770` (poll de `usleep` ~257 mil chamadas/s, `lr=0x000B58A4`), tela do aviso apagada e só 1 draw. Ou seja, o problema não é um nó isolado: o gerenciador de jobs do motor não recebe as conclusões das suas tarefas.
 - Próximo passo: ler o que as chamadas de `_cellSpursLFQueuePushBody` do PPU enviam (mensagens de 32 bytes) e o que o SPU devolve por DMA, para achar a conclusão que o motor espera.
 
+## 7e. Correção: sinais contados na LFQueue (causa do bloqueio intermitente)
+
+- **Causa encontrada.** O bloqueio intermitente em `cellSpursEventFlagWait` (padrão `0x0002`, flag `0x10482B00`) era uma perda de despertar. O consumidor SPU da `LFQueue` (`0x10482B80`) reserva um slot e espera **um** sinal por slot, mas o bit `signalled` do taskset coalesce: dois pushes seguidos (`set,set`) geravam um único despertar, a task processava um item, dormia de novo em `WAIT_SIGNAL` com um item pendente (`pop=5`, `push=6`) e o EventFlag que o PPU esperava nunca era setado. Medido com um log de sequência (`set` / `woke` / `enter wait`) e com o despejo da linha da fila no instante do bloqueio.
+- **Correção** (`runtime/spu/spu_workload.c`, `libs/spurs/cellSpurs.c`; no patch consolidado): cada push conta (`pend++`) e o waiter consome um por despertar, re-armando o bit enquanto restar contagem. Além disso o push não sinaliza mais `spurs|1` como se fosse um taskset (escrevia bytes soltos na estrutura SPURS).
+- **Resultado.** Antes ~1 em 3 execuções bloqueava; agora 0 em 26 execuções. Sem o poke de diagnóstico, o jogo chega a ler `load_menu_catalog.log` e fecha o Bink, mas a janela continua com o aviso apagado (1 draw): o nó `ugc_message` das seções 7/7b era, ao menos em parte, esse mesmo bloqueio.
+- **Novo ponto de parada.** Depois de `load_menu_catalog.log` há 12 `garbage vcall` com `this=NULL`, vindos de `func_000BFBE4` chamada por `func_000B7CEC` (lista de nós do gerenciador de jobs, campo `obj+0x24`). A thread principal passa a girar em `func_003A9C84` (espera por barreira de lanes de SPU, `func_00581140`) em ~120 consultas/s.
+
 ## 8. Pendências
 
 - Corrigir de verdade (sem poke) a conclusão do job `ugc_message...`: testar o estado de `cellNetCtl` (Disconnected em vez de erro) e a conclusão por erro do FIOS.
