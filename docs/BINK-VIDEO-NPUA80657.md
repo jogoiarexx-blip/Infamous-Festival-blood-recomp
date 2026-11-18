@@ -85,6 +85,14 @@ O sexto patch usa o decompilador com constantes em buffer. Cada draw fornece seu
 
 Um teste com microcódigo sintético alterou a opacidade de 1,0 para 0,25, verificou a atualização do buffer e compilou o mesmo HLSL como `ps_5_0`. No boot local de `NPUA80657` com a configuração padrão do runtime e os draws originais, a captura após abrir `fob_logo.bik` mostrou um corredor 3D. Ainda houve quadros pretos intercalados e cores verdes e laranjas incorretas. O menu ainda precisa ser confirmado.
 
+## Seleção de cor nos passes de pós-processamento
+
+Na cena 3D, o alvo de cor `0x00AB8000` de 1280×720 já continha a geometria do corredor antes da composição. O backbuffer apresentava falsos tons verdes e laranjas e quadros pretos. O estado RSX capturado registra formato de superfície `0x148` e texturas lineares de cor `0xA5` com remapeamento `0xAAE4`. O D3D12 representa esses alvos de cor com `R8G8B8A8_UNORM`. A exportação do depth D24S8 também pode ser exposta como RGBA8 para reproduzir a leitura dos bytes de profundidade e stencil pelo jogo.
+
+O fragment shader do passe de redução amostra `t0`. O preparo do lote tratava os offsets de zeta inativos dos passes de cor como produtores de depth. Com isso, o sampler de `0x00AB8000` em 1280×180 recebia a exportação de depth de 1280×720, e o sampler seguinte de `0x00E3C000` em 320×180 também recebia a exportação errada. O sétimo patch só registra o offset de depth/stencil para draws com um desses testes ativo ou clears de depth/stencil.
+
+Antes da correção, os 14 binds observados nesses dois passes selecionaram depth. Depois, os 14 selecionaram cor, e as 2.157 leituras rastreadas da profundidade de cena em `0x00010000` continuaram no caminho de depth. Em um par de capturas de 80 operações, o alvo de geometria de 1280×720 e a exportação de depth tiveram BMPs idênticos byte a byte. A composição mudou, mas ainda apresenta cores incorretas e quadros pretos. O patch foi aplicado sobre a série anterior em uma cópia limpa do ps3recomp, e o runtime compilou nessa cópia.
+
 ## Aplicar as correções do runtime
 
 Os patches usam o commit [`de4f090` do ps3recomp](https://github.com/sp00nznet/ps3recomp/tree/de4f090328ea08bef6b2f15caec0b85e343a7ece) como base. A partir da raiz deste repositório, com uma cópia limpa do ps3recomp nesse commit em `../ps3recomp`, execute no PowerShell.
