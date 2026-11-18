@@ -57,6 +57,14 @@ Passe a pasta com as capturas locais para `--transition-dumps` em conjunto com `
 
 Em um boot de 95 segundos com as nove imagens registradas e `SPU_MISS_FATAL=1`, houve abertura de `fob_logo.bik` sem novos misses. O log desse boot também ficou sem chamadas para os três jobs adicionais. Entre os quadros tardios capturados, a imagem alternou entre saída preta e um quadro claro com artefato no topo. O menu permaneceu ausente.
 
+## O que chega ao decodificador depois do splash
+
+Dois boots de 65 segundos do build local de `NPUA80657` reproduziram a mesma sequência. `splash_fob_america.bik` toca, `tv_fob_feed_2x2.bik` abre e fecha, e `fob_logo.bik` reusa o descritor 8. Para `fob_logo.bik`, cada uma das 20 leituras entregou os 128 KiB pedidos. A cobertura é contínua entre o início do arquivo e o offset `0x280000` (2,5 MiB), onde as leituras pararam durante a observação. O índice Bink local coloca 39 quadros compactados completos dentro desse trecho. Esse número mede os dados carregados, e a saída de vídeo precisa ser verificada à parte. [Leitura do índice Bink no FFmpeg](https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/bink.c)
+
+No rastreio do `SP Movie Player` com base em `0x00AC5430`, a abertura inicial fez `+0x48` passar de `1` para `2` e publicou `0x11771400` em `+0x4C`. Depois de abrir `fob_logo.bik`, os dois campos daquela instância ficaram sem novas gravações registradas. O outro rastreio registrou os planos YUV da abertura inicial e, depois da troca, uma textura B8 de cena com outro remapeamento. O log de áudio mostrou a porta 1 ser reaberta sem um segundo `PortStart` registrado. A investigação segue na passagem dos dados carregados para o primeiro pedido de decodificação e na identificação da instância que controla `fob_logo.bik`.
+
+Para repetir o rastreio de I/O no build local, habilite `FS_CALLER=1` e `PS3_FSLOG_READS=8` e acompanhe as leituras entre a abertura de `fob_logo.bik` e o fechamento ou fim da captura. Use o descritor retornado em `open` se a execução escolher outro número. Para repetir a observação do objeto, use `PPU_WWATCH=00AC5470`, `PPU_WWATCH_LEN=0x20` e `PPU_WWATCH_MAX=400`. O endereço se refere à instância capturada nessa edição.
+
 ## Aplicar as correções do runtime
 
 Os patches usam o commit [`de4f090` do ps3recomp](https://github.com/sp00nznet/ps3recomp/tree/de4f090328ea08bef6b2f15caec0b85e343a7ece) como base. A partir da raiz deste repositório, com uma cópia limpa do ps3recomp nesse commit em `../ps3recomp`, execute no PowerShell.
