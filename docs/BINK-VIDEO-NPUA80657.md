@@ -71,7 +71,11 @@ A captura `RSX_CAP=926:15:3` mostrou a transição de lotes com duas operações
 
 O quarto patch impede que a cópia da tela substitua uma textura se o cache de render targets já possui uma superfície no mesmo endereço e com as mesmas dimensões. O teste de seleção confirmou a prioridade do alvo correspondente, a cópia de tela para os casos anteriores sem correspondência e o upload de B8. Como referência, o RPCS3 usa o endereço, as dimensões e o pitch do buffer de exibição ao procurar a superfície do flip. [Apresentação Vulkan no RPCS3](https://github.com/RPCS3/rpcs3/blob/master/rpcs3/Emu/RSX/VK/VKPresent.cpp)
 
-O build com o patch voltou a renderizar alvos intermediários após abrir `fob_logo.bik`. Os últimos backbuffers capturados continuaram pretos. O manifesto também mostrou o offset `0x011C0000` com um alvo de 256×256 e usos como textura de 1280×720 no mesmo quadro. Isso indica onde investigar o tratamento de superfícies sobrepostas no cache.
+O build com o patch voltou a renderizar alvos intermediários após abrir `fob_logo.bik`. Os últimos backbuffers capturados continuaram pretos. O manifesto também mostrou o offset `0x011C0000` com um alvo de 256×256 e usos como textura de 1280×720 no mesmo quadro.
+
+Um rastreio na preparação do lote confirmou dois alvos de cor no mesmo offset. No quadro 964, a operação 8 pediu 1280×720 e a operação 50 pediu 256×256. Ambas usaram o formato de superfície `0x148`. Com a chave anterior, a passagem de preparação substituía o recurso de 1280×720 antes de enviar os primeiros draws à GPU.
+
+O quinto patch conserva recursos por offset, dimensões e formato. Cada draw seleciona o alvo com as suas dimensões, e a leitura de textura prioriza as dimensões do sampler. A captura do quadro 965 no build atualizado registrou os dois alvos simultaneamente e gerou dois arquivos de leitura. Os backbuffers tardios continuaram pretos. O patch corrige a seleção das superfícies. A propagação de dados entre regiões sobrepostas e a composição final ainda precisam de verificação. [Resolução de regiões de textura no RPCS3](https://github.com/RPCS3/rpcs3/blob/master/rpcs3/Emu/RSX/Common/texture_cache.h)
 
 ## Aplicar as correções do runtime
 
