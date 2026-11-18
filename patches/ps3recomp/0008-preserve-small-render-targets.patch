@@ -1,0 +1,17 @@
+diff --git a/libs/video/rsx_d3d12_backend.c b/libs/video/rsx_d3d12_backend.c
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -3747,10 +3747,10 @@
+       if (_bs && st->color_target < 0x13 &&
+           st->surface_clip_w == s_d3d.width && st->surface_clip_h == s_d3d.height)
+           return 0; }
+-    /* Surface clip dims when sane; else the window size. Any size works --
+-     * passes draw normalized full-surface quads -- this only picks resolution. */
++    /* Preserve small post-processing surfaces: normalized texture reads
++     * depend on the resource size matching the guest's dimensions. */
+     u32 w = st->surface_clip_w, h = st->surface_clip_h;
+-    if (w < 16 || w > 2048 || h < 16 || h > 2048) { w = 0; h = 0; }
++    if (!w || w > 2048 || !h || h > 2048) { w = 0; h = 0; }
+     if (out_w) *out_w = w;
+     if (out_h) *out_h = h;
+     return raw;
