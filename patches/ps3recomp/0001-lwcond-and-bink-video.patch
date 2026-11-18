@@ -1,0 +1,730 @@
+diff --git a/runtime/ppu/ppu_sysprx.cpp b/runtime/ppu/ppu_sysprx.cpp
+--- a/runtime/ppu/ppu_sysprx.cpp
++++ b/runtime/ppu/ppu_sysprx.cpp
+@@ -17,6 +17,10 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <chrono>
++#include <condition_variable>
++#include <list>
++#include <mutex>
+ /* win32_compat.h is <windows.h> on Windows (CRITICAL_SECTION for the real
+  * lwmutex exclusion) and the POSIX shims elsewhere -- Sleep, DWORD, QPC. */
+ #include "../platform/win32_compat.h"
+@@ -396,50 +400,113 @@
+     ctx->gpr[3] = 0;
+ }
+ 
+-/* sys_lwcond (sysPrxForUser) — guest-side condition variable, paired with an
+- * lwmutex. The CRT and (newly) libsre's cellSpurs create/wait/signal these. Like
+- * sys_lwmutex above, model it directly in guest memory so the args stay GUEST
+- * EAs (the generic adapter would pass them raw and the C sysPrxForUser impl
+- * deref'd them as host pointers -> AV during cellSpurs init). A no-op wait is
+- * adequate here: the CRT/SPURS paths that reach us use these for one-shot init
+- * handshakes, not long-term blocking. sys_lwcond_t is 8 bytes: +0x00 u32
+- * lwmutex EA, +0x04 u32 lwcond queue id. Titles read +0x00 themselves (an
+- * lwcond whose lwmutex reads 0 is treated as invalid). */
++/* Keep the guest lwcond layout and pair each waiter with its guest queue id.
++ * The waiter is published before releasing the lwmutex so the signaller
++ * cannot acquire the mutex and miss a thread about to wait. */
++struct LwcondWaiter {
++    uint32_t queue;
++    uint64_t thread;
++    std::condition_variable condition;
++    bool signalled = false;
++};
++
++static std::mutex s_lwcond_lock;
++static std::list<LwcondWaiter*> s_lwcond_waiters;
++
+ static void sys_lwcond_create(ppu_context* ctx)
+ {
+     static uint32_t s_lwcond_id = 0x4C000000u;
+     uint32_t lwcond  = (uint32_t)ctx->gpr[3];
+     uint32_t lwmutex = (uint32_t)ctx->gpr[4];
++    std::lock_guard lock(s_lwcond_lock);
+     vm_write32(lwcond + 0x00, lwmutex);
+     vm_write32(lwcond + 0x04, ++s_lwcond_id);
+     ctx->gpr[3] = 0;
+ }
+-static void sys_lwcond_destroy(ppu_context* ctx)    { ctx->gpr[3] = 0; }
+-static void sys_lwcond_signal(ppu_context* ctx)     { ctx->gpr[3] = 0; }
+-static void sys_lwcond_signal_all(ppu_context* ctx) { ctx->gpr[3] = 0; }
+-static void sys_lwcond_signal_to(ppu_context* ctx)  { ctx->gpr[3] = 0; }
+-/* Now that the lwmutex is REAL, a no-op wait that keeps holding it deadlocks the
+- * signaler. Release the paired lwmutex, wait briefly, reacquire (poll-style: the
+- * guest's while(!predicate) loop re-checks; signalers stay no-ops). Handles the
+- * common single (non-recursive) hold. */
++
++static void sys_lwcond_destroy(ppu_context* ctx)
++{
++    const uint32_t lwcond = (uint32_t)ctx->gpr[3];
++    std::lock_guard lock(s_lwcond_lock);
++    const uint32_t queue = vm_read32(lwcond + 4);
++    for (const auto* waiter : s_lwcond_waiters) {
++        if (waiter->queue == queue) {
++            ctx->gpr[3] = 0x8001000Au;  /* CELL_EBUSY */
++            return;
++        }
++    }
++    vm_write32(lwcond + 4, 0);
++    ctx->gpr[3] = 0;
++}
++
++static void lwcond_signal(ppu_context* ctx, bool all, bool targeted)
++{
++    const uint32_t lwcond = (uint32_t)ctx->gpr[3];
++    const uint64_t thread = ctx->gpr[4];
++    std::lock_guard lock(s_lwcond_lock);
++    const uint32_t queue = vm_read32(lwcond + 4);
++    for (auto* waiter : s_lwcond_waiters) {
++        if (waiter->queue != queue || waiter->signalled ||
++            (targeted && waiter->thread != thread))
++            continue;
++        waiter->signalled = true;
++        waiter->condition.notify_one();
++        if (!all) {
++            ctx->gpr[3] = 0;
++            return;
++        }
++    }
++    ctx->gpr[3] = targeted ? 0x80010009u : 0;  /* CELL_EPERM if target is not waiting */
++}
++
++static void sys_lwcond_signal(ppu_context* ctx) { lwcond_signal(ctx, false, false); }
++static void sys_lwcond_signal_all(ppu_context* ctx) { lwcond_signal(ctx, true, false); }
++static void sys_lwcond_signal_to(ppu_context* ctx) { lwcond_signal(ctx, false, true); }
++
+ static void sys_lwcond_wait(ppu_context* ctx)
+ {
+-    uint32_t lwcond  = (uint32_t)ctx->gpr[3];
+-    uint32_t lwmutex = vm_read32(lwcond + 0x00);
++    const uint32_t lwcond = (uint32_t)ctx->gpr[3];
++    const uint64_t timeout_us = ctx->gpr[4];
++    std::unique_lock lock(s_lwcond_lock);
++    const uint32_t lwmutex = vm_read32(lwcond);
++    const uint32_t queue = vm_read32(lwcond + 4);
+     struct LwmSlot* sl = lwm_slot(lwmutex);
+-    if (sl) {
+-        uint32_t own = vm_read32(lwmutex + LWM_OWNER);
+-        uint32_t rc  = vm_read32(lwmutex + LWM_RECUR);
+-        vm_write32(lwmutex + LWM_RECUR, 0);
+-        vm_write32(lwmutex + LWM_OWNER, 0);
+-        ppu_thread_note_block(ctx->thread_id);
+-        lwm_release(sl);
+-        Sleep(1);
+-        lwm_acquire(sl, 0);
+-        vm_write32(lwmutex + LWM_OWNER, own);
+-        vm_write32(lwmutex + LWM_RECUR, rc ? rc : 1);
+-    }
+-    ctx->gpr[3] = 0;
++    if (!queue || !sl) {
++        ctx->gpr[3] = 0x80010005u;  /* CELL_ESRCH */
++        return;
++    }
++    const uint32_t owner = vm_read32(lwmutex + LWM_OWNER);
++    const uint32_t depth = vm_read32(lwmutex + LWM_RECUR);
++    if (owner != LWM_SELF(ctx) || !depth) {
++        ctx->gpr[3] = 0x80010009u;  /* CELL_EPERM */
++        return;
++    }
++
++    LwcondWaiter waiter{queue, ctx->thread_id, {}, false};
++    const auto position = s_lwcond_waiters.insert(s_lwcond_waiters.end(), &waiter);
++    vm_write32(lwmutex + LWM_RECUR, 0);
++    vm_write32(lwmutex + LWM_OWNER, 0);
++    ppu_thread_note_block(ctx->thread_id);
++    lwm_release(sl);
++
++    const auto notified = [&waiter] { return waiter.signalled; };
++    if (timeout_us) {
++        using Clock = std::chrono::steady_clock;
++        using Microseconds = std::chrono::microseconds;
++        const auto now = Clock::now();
++        const auto max_us = std::chrono::duration_cast<Microseconds>((Clock::time_point::max)() - now).count();
++        const auto interval = timeout_us < (uint64_t)max_us ? timeout_us : (uint64_t)max_us;
++        waiter.condition.wait_until(lock, now + Microseconds(interval), notified);
++    } else {
++        waiter.condition.wait(lock, notified);
++    }
++
++    s_lwcond_waiters.erase(position);
++    lock.unlock();
++    lwm_acquire(sl, 0);
++    vm_write32(lwmutex + LWM_OWNER, owner);
++    vm_write32(lwmutex + LWM_RECUR, depth);
++    ctx->gpr[3] = waiter.signalled ? 0 : 0x8001000Bu;  /* CELL_ETIMEDOUT */
+ }
+ 
+ /* sys_ppu_thread_get_id(vm::ptr<u64> id) -> *id = calling thread's real id.
+diff --git a/libs/video/rsx_vertex_data.h b/libs/video/rsx_vertex_data.h
+new file mode 100644
+--- /dev/null
++++ b/libs/video/rsx_vertex_data.h
+@@ -0,0 +1,77 @@
++#ifndef PS3RECOMP_RSX_VERTEX_DATA_H
++#define PS3RECOMP_RSX_VERTEX_DATA_H
++
++#include "rsx_commands.h"
++#include <string.h>
++
++typedef struct {
++    u32 attribute;
++    u32 lanes;
++    float value[4];
++    int complete;
++} rsx_vertex_data_write;
++
++/* Decode a write to the current vertex attributes. Completing attribute
++ * zero emits a vertex when a primitive is open. */
++static inline int rsx_decode_vertex_data(u32 method, u32 word, rsx_vertex_data_write* out)
++{
++    u32 base;
++    u32 stride;
++    u32 components;
++    if (method >= 0x1880 && method < 0x1900) {
++        base = 0x1880; stride = 8; components = 2;
++    } else if (method >= 0x1500 && method < 0x1600) {
++        base = 0x1500; stride = 16; components = 3;
++    } else if (method >= 0x1C00 && method < 0x1D00) {
++        base = 0x1C00; stride = 16; components = 4;
++    } else if (method >= 0x1E40 && method < 0x1E80) {
++        base = 0x1E40; stride = 4; components = 1;
++    } else if (method >= 0x1900 && method < 0x1940) {
++        out->attribute = (method - 0x1900) / 4;
++        out->lanes = 0xF;
++        out->value[0] = (float)(int16_t)word;
++        out->value[1] = (float)(int16_t)(word >> 16);
++        out->value[2] = 0.0f;
++        out->value[3] = 1.0f;
++        out->complete = 1;
++        return 1;
++    } else if (method >= 0x1940 && method < 0x1980) {
++        out->attribute = (method - 0x1940) / 4;
++        out->lanes = 0xF;
++        for (u32 lane = 0; lane < 4; lane++)
++            out->value[lane] = (float)((word >> (lane * 8)) & 0xFFu) / 255.0f;
++        out->complete = 1;
++        return 1;
++    } else if ((method >= 0x1980 && method < 0x1A00) ||
++               (method >= 0x0A80 && method < 0x0B00)) {
++        const u32 packed_base = method >= 0x1980 ? 0x1980u : 0x0A80u;
++        const float scale = method >= 0x1980 ? 1.0f : 1.0f / 32767.0f;
++        const u32 lane = ((method - packed_base) & 4u) / 2u;
++        out->attribute = (method - packed_base) / 8;
++        out->lanes = 3u << lane;
++        out->value[lane] = (float)(int16_t)word * scale;
++        out->value[lane + 1] = (float)(int16_t)(word >> 16) * scale;
++        out->complete = lane == 2;
++        return 1;
++    } else {
++        return 0;
++    }
++
++    const u32 lane = ((method - base) % stride) / 4;
++    out->attribute = (method - base) / stride;
++    out->lanes = 0;
++    out->complete = lane + 1 == components;
++    if (lane < components) {
++        memcpy(&out->value[lane], &word, sizeof(word));
++        out->lanes = 1u << lane;
++    }
++    if (lane == 0) {
++        for (u32 extra = components; extra < 4; extra++) {
++            out->value[extra] = extra == 3 ? 1.0f : 0.0f;
++            out->lanes |= 1u << extra;
++        }
++    }
++    return 1;
++}
++
++#endif
+diff --git a/libs/video/rsx_commands.h b/libs/video/rsx_commands.h
+--- a/libs/video/rsx_commands.h
++++ b/libs/video/rsx_commands.h
+@@ -457,6 +457,10 @@
+ 
+     /* Texture */
+     void (*bind_texture)(void* userdata, u32 unit, const rsx_texture_state* tex);
++
++    /* Current attributes captured at each immediate position write. */
++    void (*draw_immediate)(void* userdata, const rsx_state* state, u32 primitive,
++                           const float (*vertices)[RSX_MAX_VERTEX_ATTRIBS][4], u32 count);
+ } rsx_backend;
+ 
+ /* Register a backend. Call before any RSX processing. */
+diff --git a/libs/video/rsx_commands.c b/libs/video/rsx_commands.c
+--- a/libs/video/rsx_commands.c
++++ b/libs/video/rsx_commands.c
+@@ -15,6 +15,7 @@
+  */
+ 
+ #include "rsx_commands.h"
++#include "rsx_vertex_data.h"
+ #include "ps3emu/milestone.h"   /* ps3_ms -- boot milestone log */
+ #include <stdio.h>
+ #include <stdlib.h>   /* getenv -- an implicit decl returns int, truncating the pointer */
+@@ -28,6 +29,13 @@
+ 
+ static rsx_backend* s_backend = NULL;
+ 
++#define LEGACY_IMMEDIATE_CAPACITY 4096u
++static struct {
++    const rsx_state* state;
++    u32 count;
++    float vertices[LEGACY_IMMEDIATE_CAPACITY][RSX_MAX_VERTEX_ATTRIBS][4];
++} s_immediate;
++
+ /* Last NV406E_SET_REFERENCE value seen in the FIFO. The title writes a
+  * reference then spins on the GCM control register's `ref` field until the RSX
+  * reports it as reached; cellGcmSys mirrors this into the guest control
+@@ -37,6 +45,7 @@
+ void rsx_set_backend(rsx_backend* backend)
+ {
+     s_backend = backend;
++    s_immediate.state = NULL;
+ }
+ 
+ rsx_backend* rsx_get_backend(void)
+@@ -796,25 +805,30 @@
+         state->vertex_attrib_output_mask = data;
+         return 0;
+     }
+-    /* NV4097_SET_VERTEX_DATA4F_M (0x1C00): the constant/"current" value for each
+-     * vertex attribute, 16 attributes x 4 floats. The hardware feeds this to
+-     * every vertex when the attribute's ARRAY is disabled -- it is not zero.
+-     *
+-     * Rubber Ducky leaves attribute 3 (diffuse colour) disabled and sets it here
+-     * instead; its duck shader computes (lighting * col0) * texture + spec, so a
+-     * zero col0 multiplies the texture away and the ducks rendered as a dim grey
+-     * specular term only -- present in the framebuffer, invisible on screen.
+-     * SET_VERTEX_DATA2F/4UB/2S/4S are the other encodings of the same register
+-     * file; add them if a title needs them. */
+-    if (method >= 0x1C00u && method < 0x1C00u + RSX_MAX_VERTEX_ATTRIBS * 16u) {
+-        u32 idx  = (method - 0x1C00u) >> 4;         /* attribute */
+-        u32 lane = ((method - 0x1C00u) >> 2) & 3;   /* x/y/z/w   */
+-        float f; memcpy(&f, &data, 4);
+-        state->vertex_data4f[idx][lane] = f;
+-        { static int _d = -1; if (_d < 0) _d = getenv("VDATA_DBG") ? 1 : 0;
+-          static int _n = 0;
+-          if (_d && _n < 400) { _n++;
+-            fprintf(stderr, "[VDATA4F] attr=%u lane=%u = %.4f%c", idx, lane, f, 10); } }
++    rsx_vertex_data_write vertex_write;
++    if (rsx_decode_vertex_data(method, data, &vertex_write)) {
++        for (u32 lane = 0; lane < 4; lane++) {
++            if (vertex_write.lanes & (1u << lane))
++                state->vertex_data4f[vertex_write.attribute][lane] = vertex_write.value[lane];
++        }
++        if (method >= 0x1C00u && method < 0x1D00u) {
++            static int debug = -1, logged = 0;
++            if (debug < 0) debug = getenv("VDATA_DBG") != NULL;
++            if (debug && logged < 400) {
++                logged++;
++                const u32 lane = (method >> 2) & 3;
++                fprintf(stderr, "[VDATA4F] attr=%u lane=%u = %.4f\n",
++                        vertex_write.attribute, lane, vertex_write.value[lane]);
++            }
++        }
++        if (state->in_begin_end && s_immediate.state == state &&
++            vertex_write.attribute == 0 && vertex_write.complete &&
++            s_immediate.count <= LEGACY_IMMEDIATE_CAPACITY) {
++            if (s_immediate.count < LEGACY_IMMEDIATE_CAPACITY)
++                memcpy(s_immediate.vertices[s_immediate.count], state->vertex_data4f,
++                       sizeof(state->vertex_data4f));
++            s_immediate.count++;
++        }
+         return 0;
+     }
+ 
+@@ -842,6 +856,8 @@
+             state->primitive_type = data;
+             state->in_begin_end = 1;
+             state->begin_epoch++;
++            s_immediate.state = (s_backend && s_backend->draw_immediate) ? state : NULL;
++            s_immediate.count = 0;
+ 
+             /* Flush dirty state to backend before drawing */
+             if (s_backend) {
+@@ -884,12 +900,20 @@
+                 state->texture_dirty = 0;
+             }
+         } else {
++            if (state->in_begin_end && s_immediate.state == state &&
++                s_immediate.count && s_immediate.count <= LEGACY_IMMEDIATE_CAPACITY &&
++                s_backend && s_backend->draw_immediate) {
++                s_backend->draw_immediate(s_backend->userdata, state, state->primitive_type,
++                                          s_immediate.vertices, s_immediate.count);
++            }
++            s_immediate.state = NULL;
+             state->in_begin_end = 0;
+         }
+         return 0;
+     }
+ 
+     if (method == NV4097_DRAW_ARRAYS) {
++        if (s_immediate.state == state) s_immediate.state = NULL;
+         u32 first = data & 0xFFFFFF;
+         u32 count = ((data >> 24) & 0xFF) + 1;
+         { static int _d=0; if (PS3_LOG_FIRST(_d, 32)) fprintf(stderr, "[RSX] DRAW_ARRAYS prim=%u first=%u count=%u\n", state->primitive_type, first, count); }
+@@ -934,6 +958,7 @@
+         return 0;
+     }
+     if (method == NV4097_DRAW_INDEX_ARRAY) {
++        if (s_immediate.state == state) s_immediate.state = NULL;
+         /* [23:0] first index, [31:24] count-1 (same packing as DRAW_ARRAYS). */
+         u32 first = data & 0xFFFFFF;
+         u32 count = ((data >> 24) & 0xFF) + 1;
+diff --git a/libs/video/rsx_dispatch.c b/libs/video/rsx_dispatch.c
+--- a/libs/video/rsx_dispatch.c
++++ b/libs/video/rsx_dispatch.c
+@@ -41,6 +41,7 @@
+  */
+ 
+ #include "rsx_dispatch.h"
++#include "rsx_vertex_data.h"
+ 
+ #include <string.h>
+ #include <stdio.h>
+@@ -276,41 +277,6 @@
+     rsx->seen[idx]++;
+ }
+ 
+-static void vtx_const_fold(rsx_dispatch* rsx, u32 m, u32 arg)
+-{
+-    float f;
+-    u32 attr, word;
+-    if (m >= 0x1E40 && m < 0x1E80) {                  /* DATA1F: (x,0,0,1) */
+-        attr = (m - 0x1E40) >> 2; memcpy(&f, &arg, 4);
+-        vtx_const_set(rsx, attr, 0, f); vtx_const_set(rsx, attr, 1, 0.0f);
+-        vtx_const_set(rsx, attr, 2, 0.0f); vtx_const_set(rsx, attr, 3, 1.0f);
+-    } else if (m >= 0x1880 && m < 0x1900) {           /* DATA2F: (x,y,0,1) */
+-        attr = (m - 0x1880) >> 3; word = ((m - 0x1880) >> 2) & 1; memcpy(&f, &arg, 4);
+-        vtx_const_set(rsx, attr, word, f);
+-        if (word == 0) { vtx_const_set(rsx, attr, 2, 0.0f); vtx_const_set(rsx, attr, 3, 1.0f); }
+-    } else if (m >= 0x1500 && m < 0x1600) {           /* DATA3F: (x,y,z,1) */
+-        attr = (m - 0x1500) >> 4; word = ((m - 0x1500) >> 2) & 3; memcpy(&f, &arg, 4);
+-        if (word < 3) vtx_const_set(rsx, attr, word, f);
+-        if (word == 0) vtx_const_set(rsx, attr, 3, 1.0f);
+-    } else if (m >= 0x1900 && m < 0x1940) {           /* DATA2S: (x,y,0,1), unnormalised */
+-        attr = (m - 0x1900) >> 2;
+-        vtx_const_set(rsx, attr, 0, (float)(int16_t)(arg & 0xFFFF));
+-        vtx_const_set(rsx, attr, 1, (float)(int16_t)(arg >> 16));
+-        vtx_const_set(rsx, attr, 2, 0.0f); vtx_const_set(rsx, attr, 3, 1.0f);
+-    } else if (m >= 0x1940 && m < 0x1980) {           /* DATA4UB: normalised bytes */
+-        attr = (m - 0x1940) >> 2;
+-        for (u32 c = 0; c < 4; c++)
+-            vtx_const_set(rsx, attr, c, (float)((arg >> (8 * c)) & 0xFF) / 255.0f);
+-    } else if ((m >= 0x1980 && m < 0x1A00) ||         /* DATA4S: unnormalised */
+-               (m >= 0x0A80 && m < 0x0B00)) {         /* DATA_SCALED4S: normalised */
+-        const u32 base = m >= 0x1980 ? 0x1980u : 0x0A80u;
+-        const float k = m >= 0x1980 ? 1.0f : 1.0f / 32767.0f;
+-        attr = (m - base) >> 3; word = ((m - base) >> 2) & 1;
+-        vtx_const_set(rsx, attr, word * 2 + 0, (float)(int16_t)(arg & 0xFFFF) * k);
+-        vtx_const_set(rsx, attr, word * 2 + 1, (float)(int16_t)(arg >> 16) * k);
+-    }
+-}
+-
+ void rsx_dispatch_method(rsx_dispatch* rsx, u32 method, u32 arg)
+ {
+     method &= 0xFFFFC;
+@@ -329,28 +295,19 @@
+     }
+     rsx->seen[idx]++;
+     rsx->regs[idx] = arg;
+-    if ((method >= 0x1500 && method < 0x1A00) || (method >= 0x1E40 && method < 0x1E80) ||
+-        (method >= 0x0A80 && method < 0x0B00))
+-        vtx_const_fold(rsx, method, arg);
+-
+-    /* Completing a position emits a register-based vertex: the last word of
+-     * ATTR0 in any of its immediate encodings. Other attributes update the
+-     * current values copied with that position. Keep these writes as ordinary
+-     * constant state outside BEGIN/END.
+-     *
+-     * Only the float encodings used to count (DATA3F's Z, DATA4F's W).
+-     * Resistance's movie player sends its quad as DATA2S positions, so every
+-     * movie frame drew nothing and the cutscenes played on a black screen. */
+-    if (rsx->in_begin_end && rsx->sink.immediate_vertex &&
+-        (method == 0x1508 ||    /* DATA3F  Z            */
+-         method == 0x1C0C ||    /* DATA4F  W            */
+-         method == 0x1884 ||    /* DATA2F  Y            */
+-         method == 0x1E40 ||    /* DATA1F  X            */
+-         method == 0x1900 ||    /* DATA2S  (one word)   */
+-         method == 0x1940 ||    /* DATA4UB (one word)   */
+-         method == 0x1984 ||    /* DATA4S  second word  */
+-         method == 0x0A84))     /* SCALED4S second word */
+-        rsx->sink.immediate_vertex(rsx->sink.user, rsx);
++    rsx_vertex_data_write write;
++    if (rsx_decode_vertex_data(method, arg, &write)) {
++        /* The 4F encoding already wrote the canonical register above. */
++        if (method < 0x1C00 || method >= 0x1D00) {
++            for (u32 lane = 0; lane < 4; lane++) {
++                if (write.lanes & (1u << lane))
++                    vtx_const_set(rsx, write.attribute, lane, write.value[lane]);
++            }
++        }
++        if (rsx->in_begin_end && rsx->sink.immediate_vertex &&
++            write.attribute == 0 && write.complete)
++            rsx->sink.immediate_vertex(rsx->sink.user, rsx);
++    }
+ 
+     /* Transform program upload window: word goes to instruction slot
+      * VP_UPLOAD_FROM_ID; the load pointer advances after every completed
+diff --git a/libs/video/rsx_d3d12_backend.c b/libs/video/rsx_d3d12_backend.c
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -4931,9 +4931,11 @@
+                     continue;
+                 }
+             }
+-            /* Display-sized sampler source -> the rendered frame. */
++            /* A display-sized B8 texture can be a CPU/SPU-written luma plane.
++             * It still needs its own guest memory upload. */
+             if (dr->tex[_u].set && s_screen_copy &&
+-                dr->tex[_u].w == s_d3d.width && dr->tex[_u].h == s_d3d.height) {
++                dr->tex[_u].w == s_d3d.width && dr->tex[_u].h == s_d3d.height &&
++                (dr->tex[_u].fmt & ~0x60u) != 0x81u) {
+                 static int en = -1;
+                 if (en < 0) { const char* e = getenv("SCREEN_AS_TEX"); en = e ? atoi(e) : 1; }
+                 if (en) {
+@@ -6338,6 +6340,7 @@
+  * by its RSX type; disabled slots read (0,0,0,1). */
+ typedef struct { float v[4]; } VPSlot;
+ #define VP_VERT_STRIDE (16 * sizeof(VPSlot))   /* 256 */
++static const float (*s_immediate_vertices)[RSX_MAX_VERTEX_ATTRIBS][4];
+ 
+ 
+ void rsx_vtx_pos_dbg(const rsx_state* state, const float* v, u32 n);
+@@ -6437,6 +6440,10 @@
+ 
+ static void read_vp_vertex(const rsx_state* state, u32 vi, VPSlot* out16)
+ {
++    if (s_immediate_vertices) {
++        memcpy(out16, s_immediate_vertices[vi], VP_VERT_STRIDE);
++        return;
++    }
+     if (s_vs_on > 0) s_vs.conv++;
+     for (int i = 0; i < 16; i++) {
+         rsx_fetch_attrib(state, i, vi, out16[i].v);
+@@ -6473,7 +6480,7 @@
+ 
+ static void read_vp_vertex_cached(const rsx_state* state, u32 vi, VPSlot* out16)
+ {
+-    if (!s_vc || !s_vc_cur) { read_vp_vertex(state, vi, out16); return; }
++    if (s_immediate_vertices || !s_vc || !s_vc_cur) { read_vp_vertex(state, vi, out16); return; }
+     u32 h = vi & (VC_N - 1);
+     if (s_vc_gen[h] != s_vc_cur || s_vc_tag[h] != vi) {
+         read_vp_vertex(state, vi, s_vc[h]);
+@@ -6617,7 +6624,7 @@
+ {
+     extern uint8_t* vm_base;
+     if (!state || !vm_base || !s_d3d.vp_vb_mapped) return 0;
+-    if (!state->vertex_attribs[0].enabled) return 0;
++    if (!s_immediate_vertices && !state->vertex_attribs[0].enabled) return 0;
+     vp_attrs_dbg(state);
+     u32 quads = count / 4;
+     u32 maxv = (MAX_VERTICES * VP_VERT_STRIDE - s_d3d.vp_vb_offset) / VP_VERT_STRIDE;
+@@ -6651,7 +6658,7 @@
+     extern uint8_t* vm_base;
+     s_req_verts += count; s_req_draws++;
+     if (!state || !vm_base || !s_d3d.vp_vb_mapped) return 0;
+-    if (!state->vertex_attribs[0].enabled) return 0;
++    if (!s_immediate_vertices && !state->vertex_attribs[0].enabled) return 0;
+     vp_attrs_dbg(state);
+     u32 maxv = (MAX_VERTICES * VP_VERT_STRIDE - s_d3d.vp_vb_offset) / VP_VERT_STRIDE;
+     if (count > maxv) { s_drop_draws++;
+@@ -6717,7 +6724,7 @@
+ {
+     extern uint8_t* vm_base;
+     if (!state || !vm_base || !s_d3d.vp_vb_mapped) return 0;
+-    if (!state->vertex_attribs[0].enabled) return 0;
++    if (!s_immediate_vertices && !state->vertex_attribs[0].enabled) return 0;
+     if (count < 3) return 0;
+     u32 tris = count - 2;
+     u32 maxv = (MAX_VERTICES * VP_VERT_STRIDE - s_d3d.vp_vb_offset) / VP_VERT_STRIDE;
+@@ -6743,7 +6750,7 @@
+ {
+     extern uint8_t* vm_base;
+     if (!state || !vm_base || !s_d3d.vp_vb_mapped) return 0;
+-    if (!state->vertex_attribs[0].enabled) return 0;
++    if (!s_immediate_vertices && !state->vertex_attribs[0].enabled) return 0;
+     if (count < 4) return 0;
+     u32 quads = (count - 2) / 2;
+     u32 maxv = (MAX_VERTICES * VP_VERT_STRIDE - s_d3d.vp_vb_offset) / VP_VERT_STRIDE;
+@@ -7455,6 +7462,29 @@
+     }
+ }
+ 
++static void d3d12_draw_immediate(void* ud, const rsx_state* state, u32 primitive,
++                                 const float (*vertices)[RSX_MAX_VERTEX_ATTRIBS][4], u32 count)
++{
++    if (primitive < RSX_PRIMITIVE_TRIANGLES || primitive > RSX_PRIMITIVE_POLYGON ||
++        state->vp_ucode_bytes < 16 || !s_d3d.vp_vb_mapped || !s_d3d.vp_root_sig)
++        return;
++
++    const rsx_state* previous_state = s_d3d.current_rsx_state;
++    s_d3d.current_rsx_state = state;
++    s_immediate_vertices = vertices;
++    s_d3d.merge_prev_draw = 0;
++    const u32 previous_draw_count = s_d3d.draw_count;
++    d3d12_draw_arrays(ud, primitive, 0, count);
++    s_d3d.merge_prev_draw = 0;
++    s_immediate_vertices = NULL;
++    s_d3d.current_rsx_state = previous_state;
++
++    static int logged;
++    if (s_d3d.draw_count != previous_draw_count && PS3_LOG_FIRST(logged, 8))
++        fprintf(stderr, "[D3D12] immediate draw prim=%u vertices=%u fp=0x%X tex0=0x%X\n",
++                primitive, count, state->shader_program, state->textures[0].offset);
++}
++
+ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
+ {
+     /* RSX_LIVE_FEED_DBG=1: pair with the [feed] method counts so "the FIFO
+@@ -7911,6 +7941,7 @@
+     s_d3d12_backend.set_shader        = d3d12_set_shader;
+     s_d3d12_backend.set_vertex_attribs = d3d12_set_vertex_attribs;
+     s_d3d12_backend.draw_arrays       = d3d12_draw_arrays;
++    s_d3d12_backend.draw_immediate    = d3d12_draw_immediate;
+     s_d3d12_backend.draw_indexed      = d3d12_draw_indexed;
+     s_d3d12_backend.bind_texture      = d3d12_bind_texture;
+ 
+diff --git a/libs/video/tests/test_rsx_fifo.c b/libs/video/tests/test_rsx_fifo.c
+--- a/libs/video/tests/test_rsx_fifo.c
++++ b/libs/video/tests/test_rsx_fifo.c
+@@ -1,7 +1,7 @@
+ /*
+  * ps3recomp - RSX FIFO parser test
+  *
+- * Verifies rsx_process_command_buffer: big-endian command-word decode and
++ * Verifies rsx_process_command_buffer: host-order command-word decode and
+  * method dispatch into the registered backend. This is the core of the
+  * cellGcm -> RSX bridge (cellGcmSys's gcm_consume_fifo() just hands a
+  * [get,put) slice of guest memory to this function).
+@@ -16,6 +16,12 @@
+ #include <stdio.h>
+ #include <string.h>
+ 
++uint32_t ppu_hle_inject_base;
++void vm_write32(uint32_t addr, uint32_t value) { (void)addr; (void)value; }
++void ps3_ms(const char* key) { (void)key; }
++uint32_t gcm_io_offset_to_ea(uint32_t io) { (void)io; return 0; }
++unsigned long long ps3_ms_now(void) { return 0; }
++
+ /* --- recording backend ------------------------------------------------- */
+ static int      rec_clear_calls;
+ static u32      rec_clear_color;
+@@ -23,6 +29,8 @@
+ static int      rec_blend_enable;
+ static int      rec_draw_calls;
+ static u32      rec_draw_prim, rec_draw_first, rec_draw_count;
++static u32      rec_immediate_calls, rec_immediate_prim, rec_immediate_count;
++static float    rec_immediate_vertices[3][RSX_MAX_VERTEX_ATTRIBS][4];
+ 
+ static void rb_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
+ { (void)ud;(void)flags;(void)depth;(void)stencil; rec_clear_calls++; rec_clear_color = color; }
+@@ -30,27 +38,30 @@
+ { (void)ud; rec_blend_calls++; rec_blend_enable = s->blend_enable; }
+ static void rb_draw_arrays(void* ud, u32 prim, u32 first, u32 count)
+ { (void)ud; rec_draw_calls++; rec_draw_prim = prim; rec_draw_first = first; rec_draw_count = count; }
++static void rb_draw_immediate(void* ud, const rsx_state* state, u32 prim,
++                              const float (*vertices)[RSX_MAX_VERTEX_ATTRIBS][4], u32 count)
++{
++    (void)ud;
++    (void)state;
++    rec_immediate_calls++;
++    rec_immediate_prim = prim;
++    rec_immediate_count = count;
++    if (count == 3)
++        memcpy(rec_immediate_vertices, vertices, sizeof(rec_immediate_vertices));
++}
+ 
+ static rsx_backend g_rec = {0};
+ 
+-/* --- big-endian FIFO writer -------------------------------------------- */
+-static u8  g_fifo[256];
++/* The caller has already converted FIFO words to host order. */
++static u32 g_fifo[64];
+ static u32 g_fifo_len;
+-
+-static void put_be32(u32 v)
+-{
+-    g_fifo[g_fifo_len++] = (u8)(v >> 24);
+-    g_fifo[g_fifo_len++] = (u8)(v >> 16);
+-    g_fifo[g_fifo_len++] = (u8)(v >> 8);
+-    g_fifo[g_fifo_len++] = (u8)(v);
+-}
+ 
+ /* One increasing method + single data word (count = 1). */
+ static void emit_method(u32 method, u32 data)
+ {
+     u32 header = (1u << 18) | (((method >> 2) & 0x7FF) << 2); /* type 0, count 1 */
+-    put_be32(header);
+-    put_be32(data);
++    g_fifo[g_fifo_len++] = header;
++    g_fifo[g_fifo_len++] = data;
+ }
+ 
+ #define CHECK(cond, msg) do { \
+@@ -64,6 +75,7 @@
+     g_rec.clear        = rb_clear;
+     g_rec.set_blend    = rb_set_blend;
+     g_rec.draw_arrays  = rb_draw_arrays;
++    g_rec.draw_immediate = rb_draw_immediate;
+     rsx_set_backend(&g_rec);
+ 
+     rsx_state st;
+@@ -77,18 +89,51 @@
+     emit_method(NV4097_DRAW_ARRAYS,           (2u << 24) | 0u); /* count 3, first 0 */
+     emit_method(NV4097_SET_BEGIN_END,         0);
+ 
+-    int n = rsx_process_command_buffer(&st, (const u32*)g_fifo, g_fifo_len);
++    int n = rsx_process_command_buffer(&st, g_fifo, g_fifo_len * sizeof(g_fifo[0]));
+ 
+     printf("methods processed: %d\n", n);
+     CHECK(n == 6, "all 6 methods dispatched");
+     CHECK(rec_clear_calls == 1 && rec_clear_color == 0xAABBCCDD,
+-          "clear dispatched with correct color (BE decode)");
++          "clear dispatched with correct color");
+     CHECK(rec_blend_calls == 1 && rec_blend_enable == 1,
+           "set_blend flushed on BEGIN_END with enable=1");
+     CHECK(rec_draw_calls == 1 && rec_draw_prim == RSX_PRIMITIVE_TRIANGLES &&
+           rec_draw_first == 0 && rec_draw_count == 3,
+           "draw_arrays dispatched (prim=5, first=0, count=3)");
+ 
++    /* DATA2F updates the current attribute even outside BEGIN/END. */
++    rsx_process_method(&st, 0x1880, 0x40000000u);
++    rsx_process_method(&st, 0x1884, 0x40400000u);
++    CHECK(st.vertex_data4f[0][0] == 2.0f && st.vertex_data4f[0][1] == 3.0f &&
++          st.vertex_data4f[0][2] == 0.0f && st.vertex_data4f[0][3] == 1.0f,
++          "DATA2F writes the current position as (x, y, 0, 1)");
++    CHECK(rec_immediate_calls == 0, "current positions outside BEGIN/END do not draw");
++
++    rsx_process_method(&st, NV4097_SET_BEGIN_END, RSX_PRIMITIVE_TRIANGLES);
++    rsx_process_method(&st, 0x1C2C, 0);            /* ATTR2.w = explicit zero */
++    rsx_process_method(&st, 0x1888, 0x3F000000u);  /* ATTR1.x = 0.5 */
++    rsx_process_method(&st, 0x1880, 0x3F800000u);  /* ATTR0.x = 1 */
++    rsx_process_method(&st, 0x1884, 0x40000000u);  /* ATTR0.y = 2 */
++    rsx_process_method(&st, 0x1888, 0x3F800000u);  /* ATTR1.x = 1 */
++    rsx_process_method(&st, 0x1880, 0x40000000u);  /* ATTR0.x = 2 */
++    rsx_process_method(&st, 0x1884, 0x40400000u);  /* ATTR0.y = 3 */
++    rsx_process_method(&st, 0x1900, 0x00040003u);  /* ATTR0 = (3, 4) */
++    rsx_process_method(&st, NV4097_SET_BEGIN_END, 0);
++    CHECK(rec_immediate_calls == 1 && rec_immediate_prim == RSX_PRIMITIVE_TRIANGLES &&
++          rec_immediate_count == 3, "immediate vertices are submitted together at END");
++    CHECK(rec_immediate_vertices[0][0][0] == 1.0f && rec_immediate_vertices[0][1][0] == 0.5f &&
++          rec_immediate_vertices[0][2][3] == 0.0f &&
++          rec_immediate_vertices[1][0][1] == 3.0f && rec_immediate_vertices[1][1][0] == 1.0f &&
++          rec_immediate_vertices[2][0][0] == 3.0f && rec_immediate_vertices[2][0][1] == 4.0f,
++          "a vertex snapshots current attributes at its final position word");
++
++    rsx_process_method(&st, NV4097_SET_BEGIN_END, RSX_PRIMITIVE_TRIANGLES);
++    rsx_process_method(&st, NV4097_DRAW_ARRAYS, 2u << 24);
++    rsx_process_method(&st, 0x1900, 0x00040003u);
++    rsx_process_method(&st, NV4097_SET_BEGIN_END, 0);
++    CHECK(rec_draw_calls == 2 && rec_immediate_calls == 1,
++          "an array batch is not also submitted as immediate data");
++
+     printf("\n===========================================\n");
+     printf("Results: %s (%d failure(s))\n", failures ? "FAIL" : "OK", failures);
+     return failures ? 1 : 0;
