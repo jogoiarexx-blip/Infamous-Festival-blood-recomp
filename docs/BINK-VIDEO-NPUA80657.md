@@ -77,6 +77,14 @@ Um rastreio na preparação do lote confirmou dois alvos de cor no mesmo offset.
 
 O quinto patch conserva recursos por offset, dimensões e formato. Cada draw seleciona o alvo com as suas dimensões, e a leitura de textura prioriza as dimensões do sampler. A captura do quadro 965 no build atualizado registrou os dois alvos simultaneamente e gerou dois arquivos de leitura. Os backbuffers tardios continuaram pretos. O patch corrige a seleção das superfícies. A propagação de dados entre regiões sobrepostas e a composição final ainda precisam de verificação. [Resolução de regiões de textura no RPCS3](https://github.com/RPCS3/rpcs3/blob/master/rpcs3/Emu/RSX/Common/texture_cache.h)
 
+## Constantes do fragment shader e a primeira cena 3D
+
+O cache de pipelines do Direct3D 12 identificava o fragment shader pelas instruções, mas o decompilava com constantes literais. Quando o jogo alterava a opacidade do fade no mesmo programa, o pipeline podia continuar usando a opacidade antiga e cobrir a cena.
+
+O sexto patch usa o decompilador com constantes em buffer. Cada draw fornece seus próprios valores em `b1`, e o pipeline permanece reutilizável quando só os valores mudam. `FP_CONSTBUF=0` mantém o caminho com constantes literais e usa o conteúdo completo do programa na chave do cache.
+
+Um teste com microcódigo sintético alterou a opacidade de 1,0 para 0,25, verificou a atualização do buffer e compilou o mesmo HLSL como `ps_5_0`. No boot local de `NPUA80657` com a configuração padrão do runtime e os draws originais, a captura após abrir `fob_logo.bik` mostrou um corredor 3D. Ainda houve quadros pretos intercalados e cores verdes e laranjas incorretas. O menu ainda precisa ser confirmado.
+
 ## Aplicar as correções do runtime
 
 Os patches usam o commit [`de4f090` do ps3recomp](https://github.com/sp00nznet/ps3recomp/tree/de4f090328ea08bef6b2f15caec0b85e343a7ece) como base. A partir da raiz deste repositório, com uma cópia limpa do ps3recomp nesse commit em `../ps3recomp`, execute no PowerShell.
