@@ -1,6 +1,6 @@
 # inFAMOUS: Festival of Blood — recompilação para PC
 
-> **Estado: o jogo renderiza o aviso de epilepsia completo a ~100 FPS em teste local e chega ao vídeo de splash (Bink); SPU/SPURS liftados (política, tarefa, jobs, RADG5, 27 módulos WWS). Menu ainda não alcançado. Não jogável.**
+> **Estado da edição NPUA80657:** a recompilação renderiza o aviso inicial e reproduz o vídeo de abertura Bink em cores no teste local. Depois do vídeo, o menu ainda não aparece.
 
 Projeto comunitário e não oficial para estudar a viabilidade de uma recompilação estática de **inFAMOUS: Festival of Blood** (PlayStation 3) para PC, com base no ecossistema [ps3recomp](https://github.com/sp00nznet/ps3recomp).
 
@@ -14,11 +14,11 @@ Projeto comunitário e não oficial para estudar a viabilidade de uma recompila�
 - Testes unitários e CI sem conteúdo do jogo.
 - Plano de investigação com critérios de validação.
 
-## O que não existe ainda
+## Boot local
 
-- Recompilação de funções PPU/SPU específicas deste jogo.
-- Runtime de Festival of Blood, gráficos, áudio ou gameplay.
-- Executável jogável ou suporte confirmado a uma edição específica.
+- O código PPU e SPU foi recompilado localmente a partir dos arquivos do jogo.
+- As correções de sincronização, vídeo e diagnóstico do SPU estão nos [patches do ps3recomp](patches/ps3recomp/).
+- O [rastreio do vídeo NPUA80657](docs/BINK-VIDEO-NPUA80657.md) documenta a transição após o splash e como aplicar os patches.
 
 ## Começar (Windows, Python 3.10+)
 
@@ -38,8 +38,6 @@ Se você só tiver um `EBOOT.BIN` no formato SELF, o script mostrará a identifi
 
 **Resultados reais:** [identificação SELF/NPDRM](docs/REPORT-NPUA80657.md) e [análise do ELF decodificado](docs/ELF_ANALYSIS_NPUA80657.md), da edição NPUA80657 de Festival of Blood.
 
-**Atenção:** O pipeline oficial do ps3recomp e a tradução das funções ainda não foram executados; esta é somente a etapa de análise estática.
-
 > **Privacidade:** relatórios de inventário contêm nomes, tamanhos e hashes dos arquivos. Revise antes de compartilhá-los; não envie os próprios arquivos do jogo.
 
 ## Por que precisamos identificar a edição primeiro?
@@ -50,7 +48,8 @@ Não podemos assumir que a edição, o endereço das funções, as importações
 
 | Caminho | Finalidade |
 |---|---|
-| `tools/` | Inspeção local de executáveis e inventário |
+| `tools/` | Inspeção local de executáveis e preparação das imagens SPU |
+| `patches/ps3recomp/` | Correções do runtime para aplicar ao ps3recomp |
 | `tests/` | Testes sem conteúdo proprietário |
 | `docs/ROADMAP.md` | Etapas e critérios de conclusão |
 | `docs/RESEARCH.md` | Fontes, hipóteses e decisões |
