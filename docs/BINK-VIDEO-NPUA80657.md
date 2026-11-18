@@ -65,6 +65,14 @@ No rastreio do `SP Movie Player` com base em `0x00AC5430`, a abertura inicial fe
 
 Para repetir o rastreio de I/O no build local, habilite `FS_CALLER=1` e `PS3_FSLOG_READS=8` e acompanhe as leituras entre a abertura de `fob_logo.bik` e o fechamento ou fim da captura. Use o descritor retornado em `open` se a execução escolher outro número. Para repetir a observação do objeto, use `PPU_WWATCH=00AC5470`, `PPU_WWATCH_LEN=0x20` e `PPU_WWATCH_MAX=400`. O endereço se refere à instância capturada nessa edição.
 
+## Superfícies intermediárias do Direct3D 12
+
+A captura `RSX_CAP=926:15:3` mostrou a transição de lotes com duas operações para lotes com centenas. No quadro 959, com 350 operações, o backbuffer estava preto enquanto os alvos `0x00AB8000` e `0x00E3C000` continham pixels. O quadro 962 apresentou um artefato claro. A captura com `SCREEN_AS_TEX=0` também apresentou preto no primeiro lote de 350 operações.
+
+O quarto patch impede que a cópia da tela substitua uma textura se o cache de render targets já possui uma superfície no mesmo endereço e com as mesmas dimensões. O teste de seleção confirmou a prioridade do alvo correspondente, a cópia de tela para os casos anteriores sem correspondência e o upload de B8. Como referência, o RPCS3 usa o endereço, as dimensões e o pitch do buffer de exibição ao procurar a superfície do flip. [Apresentação Vulkan no RPCS3](https://github.com/RPCS3/rpcs3/blob/master/rpcs3/Emu/RSX/VK/VKPresent.cpp)
+
+O build com o patch voltou a renderizar alvos intermediários após abrir `fob_logo.bik`. Os últimos backbuffers capturados continuaram pretos. O manifesto também mostrou o offset `0x011C0000` com um alvo de 256×256 e usos como textura de 1280×720 no mesmo quadro. Isso indica onde investigar o tratamento de superfícies sobrepostas no cache.
+
 ## Aplicar as correções do runtime
 
 Os patches usam o commit [`de4f090` do ps3recomp](https://github.com/sp00nznet/ps3recomp/tree/de4f090328ea08bef6b2f15caec0b85e343a7ece) como base. A partir da raiz deste repositório, com uma cópia limpa do ps3recomp nesse commit em `../ps3recomp`, execute no PowerShell.
