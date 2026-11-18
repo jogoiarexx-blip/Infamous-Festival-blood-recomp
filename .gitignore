@@ -1,6 +1,7 @@
 # Arquivos de jogo e dumps locais: NUNCA publicar
 /private/
 /game/
+/gamedata/
 /dumps/
 /out/
 /build/
