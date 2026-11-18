@@ -65,6 +65,18 @@ No rastreio do `SP Movie Player` com base em `0x00AC5430`, a abertura inicial fe
 
 Para repetir o rastreio de I/O no build local, habilite `FS_CALLER=1` e `PS3_FSLOG_READS=8` e acompanhe as leituras entre a abertura de `fob_logo.bik` e o fechamento ou fim da captura. Use o descritor retornado em `open` se a execução escolher outro número. Para repetir a observação do objeto, use `PPU_WWATCH=00AC5470`, `PPU_WWATCH_LEN=0x20` e `PPU_WWATCH_MAX=400`. O endereço se refere à instância capturada nessa edição.
 
+## Esperas da PPU após abrir o vídeo do título
+
+A rotina `0x00580A40` consulta uma linha de 16 bytes em `*objeto + 0x40 + 16 × índice`. Ela calcula o máximo de `min(u16(+2), u16(+4))` e dos quatro campos de `+6` a `+0xC`, depois limita o resultado por `u16(+0xE)`. Retorna 1 quando esse valor alcança o alvo. O chamador `0x003AA848` volta a consultar após `sys_timer_usleep(1)` quando a comparação falha.
+
+No boot com `PS3_WAIT_OBJ=003AA900`, o objeto `0x00B50C80` apontou para `0x00B50C00`, o argumento registrado para `Wws_Job/General`. As primeiras oito amostras após abrir `fob_logo.bik` consultaram descritores diferentes, com alvos entre `0x0151` e `0x0173`. Esse trecho do rastreio mostra avanço entre alvos.
+
+Com `PS3_POLLTOP=5`, em uma janela de cinco segundos após abrir o vídeo, foram registradas 15 842 esperas de 1 µs no retorno `0x003AA900` e 466 243 esperas de 10 µs no retorno `0x001FFADC`, ambas na thread principal. O segundo retorno pertence à chamada de `0x0036B5A4`, que espera `objeto + 0x318` ficar igual a `4`. A análise estática encontrou `0x0036A894` inicializando o campo com `4`, `0x0036B9A8` limpando o campo e `0x0036B128` escrevendo os estados de `1` a `4`.
+
+`PS3_WAIT_OBJ=001FFADC` capturou `r31=0x00AE2700` nas primeiras chamadas, antes do vídeo do título. O mesmo endereço foi passado como argumento na criação da thread 5, `SPU Light Task Kicker`. A PPU consulta o campo em `0x00AE2A18` para esse objeto. O chamador da rotina que escreve os estados é a mesma thread 5, observada em `0x0036B54C`.
+
+Um boot de 39 segundos com `PPU_WWATCH=00AE2A18` e `PPU_WWATCH_MAX=12000` registrou vários ciclos completos de `0` a `4` após abrir `fob_logo.bik`. No fim da captura, um ciclo ainda estava no estado `3`. A espera mais frequente da thread principal acompanha esse processamento recorrente. A captura ainda deixa em aberto por que o menu não aparece.
+
 ## Aplicar as correções do runtime
 
 Os patches usam o commit [`de4f090` do ps3recomp](https://github.com/sp00nznet/ps3recomp/tree/de4f090328ea08bef6b2f15caec0b85e343a7ece) como base. A partir da raiz deste repositório, com uma cópia limpa do ps3recomp nesse commit em `../ps3recomp`, execute no PowerShell.
