@@ -109,6 +109,16 @@ O nono patch guarda uma referência ao PSO preparado para cada draw e o reutiliz
 
 O log de alto volume também foi desativado em uma repetição e a pausa permaneceu. O rastreio identificou o semáforo 7 como pertencente à thread `Bink Snd`, e registrou polling SPU em uma linha de reserva. Isso localiza atividades durante a pausa, mas a causa da demora ainda precisa de confirmação. A composição mantém cores incorretas e quadros pretos.
 
+## Atribuição das amostras de CPU pelo mapa do executável
+
+O sampler interno reportou ausência de `.pdata` e atribuiu grande parte das amostras à função `0x00422ABC`, cujo corpo local retorna imediatamente. A consulta por intervalo e a busca de um chamador na pilha podem atribuir tempo em código de host a um endereço guest. Os percentuais dessa listagem exigem conferência com os endereços brutos.
+
+Um build com `/MAP:cpu-sampling.map` foi executado com `PS3_SAMPLE=10`, `PS3_SAMPLE_MAIN=1` e `PS3_SAMPLE_RVAS` apontando para um arquivo privado. O mapa foi gerado na mesma linkedição do executável amostrado. Durante a transição, vários blocos tiveram a maioria dos RIPs fora do executável. Mais tarde, os blocos finais mostraram polling de conclusão de jobs. No último bloco de 939 amostras, 223 ficaram fora do executável, 24,7% foram associados ao símbolo anterior `0x002B0B74`, 22,2% a `0x00580A40`, 15,5% a `0x003A9E68` e 13,1% a `0x006CE624`. A função `0x003A9E68` consulta o descritor e chama `0x00580A40` para verificar a conclusão.
+
+`tools/summarize_cpu_samples.py` recebe o arquivo de RVAs e o mapa correspondente. O relatório preserva as amostras externas e agrupa símbolos com o mesmo endereço. A associação por símbolo anterior no mapa é aproximada. Para executar, use `python tools/summarize_cpu_samples.py caminho/main-rvas.txt caminho/cpu-sampling.map`. Os mapas, endereços amostrados e código gerado do jogo permanecem locais.
+
+Essa medição identifica os locais de espera. A causa da demora dos jobs, a composição e a meta de 30 FPS continuam em investigação.
+
 ## Aplicar as correções do runtime
 
 Os patches usam o commit [`de4f090` do ps3recomp](https://github.com/sp00nznet/ps3recomp/tree/de4f090328ea08bef6b2f15caec0b85e343a7ece) como base. A partir da raiz deste repositório, com uma cópia limpa do ps3recomp nesse commit em `../ps3recomp`, execute no PowerShell.
