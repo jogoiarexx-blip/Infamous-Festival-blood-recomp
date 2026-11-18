@@ -93,6 +93,12 @@ O fragment shader do passe de redução amostra `t0`. O preparo do lote tratava 
 
 Antes da correção, os 14 binds observados nesses dois passes selecionaram depth. Depois, os 14 selecionaram cor, e as 2.157 leituras rastreadas da profundidade de cena em `0x00010000` continuaram no caminho de depth. Em um par de capturas de 80 operações, o alvo de geometria de 1280×720 e a exportação de depth tiveram BMPs idênticos byte a byte. A composição mudou, mas ainda apresenta cores incorretas e quadros pretos. O patch foi aplicado sobre a série anterior em uma cópia limpa do ps3recomp, e o runtime compilou nessa cópia.
 
+## Dimensões dos alvos pequenos da composição
+
+O RSX configura os alvos `0x00D06000` e `0x00D1A000` com clip de 20×11. Os shaders de filtragem leem essas superfícies no mesmo tamanho. O backend descartava dimensões menores que 16 e alocava ambos como 1280×720. O viewport continuava em 20×11, por isso a amostragem com coordenadas normalizadas cobria uma região diferente da escrita.
+
+O oitavo patch preserva o clip válido ao criar a superfície. Nos manifestos anteriores, os alvos apareciam em 1280×720 mesmo com draws e texturas de 20×11. Com o patch, os dois readbacks e os recursos usados pelos samplers têm 20×11. O runtime compilou em uma cópia limpa com a série de patches aplicada. A composição final ainda apresenta tons incorretos e quadros pretos.
+
 ## Aplicar as correções do runtime
 
 Os patches usam o commit [`de4f090` do ps3recomp](https://github.com/sp00nznet/ps3recomp/tree/de4f090328ea08bef6b2f15caec0b85e343a7ece) como base. A partir da raiz deste repositório, com uma cópia limpa do ps3recomp nesse commit em `../ps3recomp`, execute no PowerShell.
