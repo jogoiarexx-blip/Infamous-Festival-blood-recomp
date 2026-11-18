@@ -37,9 +37,17 @@ O primeiro draw de vídeo revelou que o backend ainda substituía o plano Y por 
 
 Depois do splash, a edição local abriu `fob_logo.bik`. Em execuções com `SPU_MISS_FATAL=1`, o dispatcher também encontrou imagens SPURS sem registro, incluindo `0x5EC85F9D752F82D1` (18 960 bytes) e `0x7FD662F57F44EC4C` (2 192 bytes) em execuções diferentes. Essas ocorrências dependem da execução. Ainda falta identificar os jobs e verificar se explicam a tela preta após o splash.
 
-Na captura anterior, o modo fatal abortava antes de salvar a imagem do job. O segundo patch move a captura para antes do aviso fatal, permitindo usar `SPU_DUMP_MISS` com `SPU_MISS_FATAL=1`. A pasta de destino precisa existir. Mantenha os dumps em `out/` e use-os somente no build local. No teste de boot após recompilar com esse patch, o executável chegou a `fob_logo.bik` e permaneceu em espera de semáforo até o fim da janela de 65 segundos. Esse teste não voltou a encontrar as imagens sem registro.
+Na captura anterior, o modo fatal abortava antes de salvar a imagem do job. O segundo patch move a captura para antes do aviso fatal, permitindo usar `SPU_DUMP_MISS` com `SPU_MISS_FATAL=1`. A pasta de destino precisa existir. Mantenha os dumps em `out/` e use-os somente no build local. No teste de boot após recompilar com esse patch, o executável chegou a `fob_logo.bik` e registrou esperas de semáforo até o fim da janela de 65 segundos. Esse teste não voltou a encontrar as imagens sem registro.
 
 Nesse mesmo teste, o RSX vinculou a textura B8 de 1280×720 no offset local `0x0F800000` antes de o rastreio SPU registrar escritas DMA de 160 bytes em `0xCF800000` e nas linhas seguintes, com passo de 1280 bytes. O endereço também aparece no relatório sobre o buffer de oclusão da edição europeia. A ordem das chamadas no log é uma pista para verificar quando o backend atualiza essa textura na edição americana. [Notas do fork de RPCS3 para a edição europeia](https://github.com/ttmx/rpcs3-infamous2/blob/infamous2-optimizations/festival/README.md)
+
+## Remapeamento B8 e rastreio da transição
+
+O backend D3D12 usava o mesmo mapeamento de canais em todos os uploads B8. Com `TEXTURE_CONTROL1=0xA9FF`, a textura de `0xCF800000` deve fornecer o byte B8 em RGB e valor 1 em alfa. O backend fornecia o byte B8 em todos os canais. O terceiro patch usa o decodificador de remapeamento existente. Com `0xAAFF`, usado para replicar o byte B8 nos quatro canais, o resultado continua sendo `0x1000` no D3D12. O teste do mapeamento observado em `0xA9FF` passou de `0x1000` para `0x1A00`. [Mapeamento B8 no RPCS3](https://github.com/RPCS3/rpcs3/blob/master/rpcs3/Emu/RSX/VK/VKFormats.cpp)
+
+No teste com o terceiro patch, a abertura da Sucker Punch apareceu em cores. Depois de abrir `fob_logo.bik`, a captura tardia continuou sem mostrar o menu. O rastreio registrou pedidos de PUT para `0xCF800000` antes de um upload em que as amostras da textura ainda estavam zeradas. A origem dos zeros precisa ser verificada entre os bytes na LS do SPU, a conclusão do DMA e a leitura do D3D12.
+
+Com `SEMTID=1`, as esperas repetidas de 5 ms no semáforo `RADGAME` foram atribuídas à thread `Bink Snd`. No mesmo intervalo, `PS3_SAMPLE_MAIN=1` amostrou a thread principal executando funções PPU. O log de áudio mostrou a reabertura da porta Bink após o splash, e a segunda abertura ficou sem um `PortStart` registrado durante esse teste.
 
 ## Aplicar as correções do runtime
 
