@@ -1,0 +1,20 @@
+diff --git a/runtime/spu/spu_workload.c b/runtime/spu/spu_workload.c
+--- a/runtime/spu/spu_workload.c
++++ b/runtime/spu/spu_workload.c
+@@ -1042,7 +1042,6 @@
+           if (++miss_n <= 32 || miss_n % 100000 == 0)
+             fprintf(stderr, "[spurs-job] dispatch MISS fp=0x%016llX size=%u job=0x%08X (#%llu)\n",
+                     (unsigned long long)fp, image_size, job_ea, miss_n); }
+-        spu_workload_report_miss("SPURS job", fp, image_size, job_ea);
+         /* SPU_DUMP_MISS=<dir>: write the unrecognised image out so it can be
+          * lifted and registered. SPURS job binaries are raw code+data blobs
+          * the title loads from its own data files -- unlike sys_spu_image
+@@ -1067,6 +1066,8 @@
+                   }
+               }
+           } }
++        /* The fatal miss handler can abort, so finish the capture first. */
++        spu_workload_report_miss("SPURS job", fp, image_size, job_ea);
+         return 0;
+     }
+     /* Two lines plus two explicit flushes PER JOB. A title running its audio
