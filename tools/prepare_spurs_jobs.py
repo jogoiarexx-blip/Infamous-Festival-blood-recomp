@@ -12,6 +12,7 @@ Nothing is written into ../ps3recomp. Output is game-derived: DO NOT COMMIT.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 import subprocess
@@ -21,8 +22,17 @@ from pathlib import Path
 
 # (fingerprint, size, symbol prefix, image id). 1 = fob_spu, 2 = fob_policy.
 JOBS = (
-    (0x054414E2CCD626FF, 1040, "fobjob0544_", 3),
-    (0x64D9D14299A2B7AB, 272, "fobjob64D9_", 4),
+    (0x054414E2CCD626FF, 1040, "fobjob0544_", 3, None),
+    (0x64D9D14299A2B7AB, 272, "fobjob64D9_", 4, None),
+)
+BOOT_JOBS = (
+    (0x8927C5C0BC233071, 2192, "fobjob8927_", 6, None),
+    (0xA3A153B14368B1B7, 7696, "fobjobA3A1_", 7, None),
+    # The float table after this boundary is loaded into LS as data.
+    (0xB5EFEE742877FBAD, 32800, "fobjobB5EF_", 8, 0x5C10),
+)
+LATER_BOOT_JOBS = (
+    (0x6F43025331D3AA1A, 7184, "fobjob6F43_", 9, None),
 )
 
 
@@ -39,6 +49,14 @@ def run(args: list[str]) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--boot-dumps", type=Path,
+                        help="Capture directory containing the three additional boot jobs.")
+    parser.add_argument("--later-dumps", type=Path,
+                        help="Capture directory containing the later boot job.")
+    args = parser.parse_args()
+    if args.later_dumps is not None and args.boot_dumps is None:
+        parser.error("--later-dumps requires --boot-dumps")
     root = Path(__file__).resolve().parent.parent
     tools = root.parent / "ps3recomp" / "tools"
     spu_dir = root / "out/port/spu"
@@ -52,8 +70,13 @@ def main() -> None:
     entries = []
     with tempfile.TemporaryDirectory(prefix="fob-jobs-", dir=root / "out") as td:
         stage = Path(td)
-        for fp, size, prefix, image_id in JOBS:
-            raw_path = root / f"out/spu-misses/spujob_{fp:016X}_{size}.bin"
+        jobs = [(root / "out/spu-misses", job) for job in JOBS]
+        if args.boot_dumps is not None:
+            jobs.extend((args.boot_dumps, job) for job in BOOT_JOBS)
+        if args.later_dumps is not None:
+            jobs.extend((args.later_dumps, job) for job in LATER_BOOT_JOBS)
+        for dump_dir, (fp, size, prefix, image_id, code_end) in jobs:
+            raw_path = dump_dir / f"spujob_{fp:016X}_{size}.bin"
             if not raw_path.is_file():
                 raise SystemExit("ERRO: dump ausente (rode com SPU_DUMP_MISS): " + str(raw_path))
             data = raw_path.read_bytes()
@@ -65,9 +88,12 @@ def main() -> None:
             report = stage / (name + ".json")
             run([sys.executable, str(tools / "wrap_spu_elf.py"), str(raw_path),
                  "--entry", "0x0", "--base", "0x0", "--out", str(elf)])
-            run([sys.executable, str(tools / "spu_lifter.py"), "--auto-functions", str(elf),
-                 "--base", "0x0", "--symbol-prefix", prefix,
-                 "--output", str(out), "--report", str(report)])
+            lift = [sys.executable, str(tools / "spu_lifter.py"), "--auto-functions", str(elf),
+                    "--base", "0x0", "--symbol-prefix", prefix,
+                    "--output", str(out), "--report", str(report)]
+            if code_end is not None:
+                lift.extend(["--code-end", hex(code_end)])
+            run(lift)
             diag = json.loads(report.read_text(encoding="utf-8"))
             starts = {s for s, _ in diag.get("functions", [])}
             missing = (set(diag.get("call_targets", [])) | set(diag.get("branch_targets", []))) - starts
