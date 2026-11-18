@@ -39,6 +39,8 @@ Depois do splash, a edição local abriu `fob_logo.bik`. Em execuções com `SPU
 
 Na captura anterior, o modo fatal abortava antes de salvar a imagem do job. O segundo patch move a captura para antes do aviso fatal, permitindo usar `SPU_DUMP_MISS` com `SPU_MISS_FATAL=1`. A pasta de destino precisa existir. Mantenha os dumps em `out/` e use-os somente no build local. No teste de boot após recompilar com esse patch, o executável chegou a `fob_logo.bik` e permaneceu em espera de semáforo até o fim da janela de 65 segundos. Esse teste não voltou a encontrar as imagens sem registro.
 
+Nesse mesmo teste, o RSX vinculou a textura B8 de 1280×720 no offset local `0x0F800000` antes de o rastreio SPU registrar escritas DMA de 160 bytes em `0xCF800000` e nas linhas seguintes, com passo de 1280 bytes. O endereço também aparece no relatório sobre o buffer de oclusão da edição europeia. A ordem das chamadas no log é uma pista para verificar quando o backend atualiza essa textura na edição americana. [Notas do fork de RPCS3 para a edição europeia](https://github.com/ttmx/rpcs3-infamous2/blob/infamous2-optimizations/festival/README.md)
+
 ## Aplicar as correções do runtime
 
 Os patches usam o commit [`de4f090` do ps3recomp](https://github.com/sp00nznet/ps3recomp/tree/de4f090328ea08bef6b2f15caec0b85e343a7ece) como base. A partir da raiz deste repositório, com uma cópia limpa do ps3recomp nesse commit em `../ps3recomp`, execute no PowerShell.
