@@ -119,6 +119,16 @@ Um build com `/MAP:cpu-sampling.map` foi executado com `PS3_SAMPLE=10`, `PS3_SAM
 
 Essa medição identifica os locais de espera. A causa da demora dos jobs, a composição e a meta de 30 FPS continuam em investigação.
 
+## Contadores de conclusão dos jobs
+
+Um build local instrumentou a entrada de `0x00580A40` para registrar objeto, índice, alvo e os oito campos da linha consultada, com uma amostra por segundo. A rotina compara o mínimo dos sete campos u16 de `+2` a `+0xE` com o alvo. A descrição anterior da análise local, que falava em máximo entre campos, estava incorreta.
+
+No primeiro boot observado, a thread principal em `0x003A9ECC` consultou o objeto `0x00B50C80`, índice 0, linha `0x00B50C40`, pedindo `0x01D6`. As amostras finais repetiram `01D4 01D4 FFFF 01D2 FFFF FFFF FFFF FFFF`. O mínimo é `0x01D2`, inferior ao alvo. Outro boot reproduziu a mesma diferença entre o alvo e o mínimo, com alvo `0x00E0` e mínimo `0x00DC`. Esses registros mostram uma espera persistente depois dos primeiros quadros 3D.
+
+Os objetos da thread `SPU Light Task Kicker` em `0x00B51E80` registraram consultas com valor mínimo `0x001F` e alvos inferiores. A espera persistente capturada pertence ao objeto de jobs gerais. Os campos ainda exigem associação ao job e ao trabalhador responsáveis.
+
+Um terceiro boot habilitou `SPU_ATOM_EA=00B50C00`, `SPU_ATOM_FULL=2` e um limite de 8.000 registros. O policy module de imagem 2 acessou essa linha pelo helper em LS `0x0239C`, com retornos `0x02C68` e `0x02FE8`. O rastreio também mostrou commits PUTLLC bem-sucedidos. O limite foi atingido durante o avanço inicial, portanto essa captura ainda deixa em aberto a última gravação anterior à espera. As capturas com rastreio atômico têm custo adicional e não servem como benchmark de FPS.
+
 ## Aplicar as correções do runtime
 
 Os patches usam o commit [`de4f090` do ps3recomp](https://github.com/sp00nznet/ps3recomp/tree/de4f090328ea08bef6b2f15caec0b85e343a7ece) como base. A partir da raiz deste repositório, com uma cópia limpa do ps3recomp nesse commit em `../ps3recomp`, execute no PowerShell.
