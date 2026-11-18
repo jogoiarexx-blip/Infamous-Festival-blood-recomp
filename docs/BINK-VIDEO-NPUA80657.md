@@ -49,6 +49,14 @@ No teste com o terceiro patch, a abertura da Sucker Punch apareceu em cores. Dep
 
 Com `SEMTID=1`, as esperas repetidas de 5 ms no semáforo `RADGAME` foram atribuídas à thread `Bink Snd`. No mesmo intervalo, `PS3_SAMPLE_MAIN=1` amostrou a thread principal executando funções PPU. O log de áudio mostrou a reabertura da porta Bink após o splash, e a segunda abertura ficou sem um `PortStart` registrado durante esse teste.
 
+## Jobs SPURS capturados na transição
+
+Uma execução com `SPU_DUMP_MISS` capturou `0x2BC127B9AAF9165A` (5 520 bytes), `0x5EC85F9D752F82D1` (18 960 bytes) e `0x7FD662F57F44EC4C` (2 192 bytes) após abrir `fob_logo.bik`. Os 2 192 bytes correspondem a outro job além de `0x8927C5C0BC233071`, que tem o mesmo tamanho. O tradutor encontrou as três entradas e resolveu todos os alvos diretos registrados no relatório. O teste no executável recompilado confirmou os três registros SPU.
+
+Passe a pasta com as capturas locais para `--transition-dumps` em conjunto com `--boot-dumps` e `--later-dumps`. O script gera e registra nove jobs com os três grupos adicionais habilitados.
+
+Em um boot de 95 segundos com as nove imagens registradas e `SPU_MISS_FATAL=1`, houve abertura de `fob_logo.bik` sem novos misses. O log desse boot também ficou sem chamadas para os três jobs adicionais. Entre os quadros tardios capturados, a imagem alternou entre saída preta e um quadro claro com artefato no topo. O menu permaneceu ausente.
+
 ## Aplicar as correções do runtime
 
 Os patches usam o commit [`de4f090` do ps3recomp](https://github.com/sp00nznet/ps3recomp/tree/de4f090328ea08bef6b2f15caec0b85e343a7ece) como base. A partir da raiz deste repositório, com uma cópia limpa do ps3recomp nesse commit em `../ps3recomp`, execute no PowerShell.
