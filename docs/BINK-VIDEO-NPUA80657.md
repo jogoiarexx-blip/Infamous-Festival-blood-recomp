@@ -99,6 +99,16 @@ O RSX configura os alvos `0x00D06000` e `0x00D1A000` com clip de 20×11. Os shad
 
 O oitavo patch preserva o clip válido ao criar a superfície. Nos manifestos anteriores, os alvos apareciam em 1280×720 mesmo com draws e texturas de 20×11. Com o patch, os dois readbacks e os recursos usados pelos samplers têm 20×11. O runtime compilou em uma cópia limpa com a série de patches aplicada. A composição final ainda apresenta tons incorretos e quadros pretos.
 
+## Medição de CPU e GPU e reutilização de pipelines
+
+As execuções de desempenho usam 1280×720, a mesma cena inicial e `PS3_VERBOSE=0`, com readbacks, dumps de shaders e rastreios de superfícies desativados. Uma versão local de diagnóstico mede o tempo de CPU por lote e usa consultas de timestamp D3D12 para medir a execução da GPU. O tempo medido na GPU é convertido pela frequência da command queue. [Documentação de timestamps do D3D12](https://learn.microsoft.com/en-us/windows/win32/direct3d12/timing)
+
+Na RTX 4060, após aquecer os pipelines, o lote de 574 operações levou cerca de 70–74 ms na GPU e o lote de composição cerca de 23 ms. As pausas entre o lote pesado e a composição ficaram próximas de dois segundos. O tempo de espera inicial pelo fence teve mediana abaixo de 0,03 ms, com esperas isoladas de alguns milissegundos. O cache tinha aproximadamente 100–133 PSOs e 60–61 vertex shaders, abaixo das capacidades de 256 e 128. Os lotes aquecidos registraram zero misses de PSO. O contador anterior de FPS inclui lotes apresentados em fronteiras de clear. A cadência de lotes pesados foi de aproximadamente 0,44–0,48 por segundo nas repetições. Esses números ainda deixam 30 FPS pendentes.
+
+O nono patch guarda uma referência ao PSO preparado para cada draw e o reutiliza na gravação do comando. Antes, o backend repetia a resolução, o hash do fragment shader e a busca no cache nessa etapa. As referências são mantidas até a conclusão da GPU para suportar evicções do cache. Na comparação visual, os oito alvos de geometria coincidiram byte a byte, assim como sete dos oito backbuffers, incluindo o quadro de 80 operações com o corredor visível. O runtime compilou sobre a série de patches em uma cópia limpa. A alteração reduz a busca de PSO a uma por draw. As medições ainda não demonstram ganho sustentado de FPS.
+
+O log de alto volume também foi desativado em uma repetição e a pausa permaneceu. O rastreio identificou o semáforo 7 como pertencente à thread `Bink Snd`, e registrou polling SPU em uma linha de reserva. Isso localiza atividades durante a pausa, mas a causa da demora ainda precisa de confirmação. A composição mantém cores incorretas e quadros pretos.
+
 ## Aplicar as correções do runtime
 
 Os patches usam o commit [`de4f090` do ps3recomp](https://github.com/sp00nznet/ps3recomp/tree/de4f090328ea08bef6b2f15caec0b85e343a7ece) como base. A partir da raiz deste repositório, com uma cópia limpa do ps3recomp nesse commit em `../ps3recomp`, execute no PowerShell.
