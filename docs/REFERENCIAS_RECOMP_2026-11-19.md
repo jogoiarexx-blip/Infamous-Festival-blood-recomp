@@ -106,3 +106,54 @@ O primeiro busca assinatura potencial de overlay; **não considera o match uma f
 1. Em dois boots limpos, obter o último evento que mudou o mínimo dos sete campos para o objeto geral e identificar qual lane ficou atrás.
 2. Relacionar a lane atrasada com job, worker, local store, PUTLLC e wake-up. Determinar se o progresso cai no interpretador por overlay não registrado ou se existe erro de coerência/sinalização.
 3. Corrigir apenas divergência comprovada; comparar FPS real e integridade de quadros com as mesmas configurações. Não forçar o contador, pular trabalho SPU nem maquiar o FPS.
+
+## Terceira inspeção de código: falhas concretas que se parecem com nosso boot
+
+**Revisado em 19/11/2026.** A análise anterior já identificava o problema de conclusão de jobs e a composição D3D12. Esta seção detalha **três famílias** de módulos SPU e confirma o que nossa base *já implementa*, para evitar duplicação.
+
+### 1. Código SPU por três mecanismos (não confundir)
+
+| Formato/condição | Referência do código | Risco se faltar | Situação do nosso projeto |
+| --- | --- | --- | --- |
+| Módulo WWS de EBOOT com marcador **C0DEC0DE** e LS base 0x4000 | [B: extract_eboot_jobmods.py](https://github.com/erikomis/infamous2-recomp/blob/61ad6ffd826dc6d1f32bf78ccbaa4ab98352f980/infamous2-lle/tools/extract_eboot_jobmods.py) | Job cai no interpretador ou não acha função | Já há **27 módulos WWS** traduzidos por `tools/prepare_engine_jobmods.py`, com entradas adicionais 0x9548, 0x95D8 e 0x9690. Resultado histórico local ~8→44 FPS; conferir se o build atual ainda os inclui. |
+| Segundo módulo WWS com marcador **DA7ABA5E**, entrada em LS **0x6C00** | [B: lift_datamods.py](https://github.com/erikomis/infamous2-recomp/blob/61ad6ffd826dc6d1f32bf78ccbaa4ab98352f980/infamous2-lle/tools/lift_datamods.py) | No inFAMOUS 2 do autor, ~22.000 instruções interpretadas por chamada e menu ~17 FPS, ~30 após lift | **Não foi comprovado para NPUA80657**. Nova análise read-only com `tools/inspect_spu_overlays.py data`; saída somente metadados e offsets. |
+| Overlay SPU relocável, carregado em **LS variável** | [B: lift_relocmods.py](https://github.com/erikomis/infamous2-recomp/blob/61ad6ffd826dc6d1f32bf78ccbaa4ab98352f980/infamous2-lle/tools/lift_relocmods.py) | Endereço LS fixo traduzido não encontra bloco carregado em outra posição | `tools/inspect_spu_overlays.py scan` já procura candidatos com prologue específico, não prova identidade. Validar pelo guest EA/GET e registro do runtime. |
+
+**Importante:** examinado o código real da base `sp00nznet/ps3recomp` em commit `de4f090328ea08bef6b2f15caec0b85e343a7ece`:
+- `runtime/spu/spu_channels.c`, em `spu_lifted_lookup_full`, considera `resident_code`, `resident_ovl` e offset relocável. A checagem de rejoin após `spu_interp_run_until` também chama `spu_lifted_lookup`.
+- Portanto **já existe a infraestrutura para reentrar no código recompilado**; o defeito descrito no B (0,4 FPS por rejoin errado) não deve ser assumido como ainda presente aqui. Precisamos medir `SPU_INTERP_STATS`, resolver ou não cada PC em `resident_code`, e conferir cobertura de módulos/entry points no build local.
+- `DONTFLIP.md` do projeto A identifica regressões provocadas por mexer em ordenação de memória, incluindo perda de sinais SPURS. Não alterar fences só para conseguir progresso.
+
+### 2. O problema conhecido de shader verde já tem uma correção na base
+
+O [B: README LLE](https://github.com/erikomis/infamous2-recomp/blob/61ad6ffd826dc6d1f32bf78ccbaa4ab98352f980/infamous2-lle/README.md) registra que fragment shader pack/unpack de `PK4UB/UP4UB/PKG/UPG` ausentes fizeram personagem ficar verde. Contudo o nosso [`rsx_fp_decompiler.c` na base de4f090](https://github.com/sp00nznet/ps3recomp/blob/de4f090328ea08bef6b2f15caec0b85e343a7ece/libs/video/rsx_fp_decompiler.c) **já contém case OP_PK4UB/OP_UP4UB/OP_PKG/OP_UPG** e as funções HLSL de pack/unpack. Não propor patch duplicado.
+
+Na mesma base, [`rsx_texture_layout.c`](https://github.com/sp00nznet/ps3recomp/blob/de4f090328ea08bef6b2f15caec0b85e343a7ece/libs/video/rsx_texture_layout.c) já decodifica formatos B8, X16 e depth e trabalha com remapeamento de componentes. Não assumir ausência total de crossbar.
+
+**Testar agora**: na mesma draw do corredor capturado, comparar entradas de textura com o sampler efetivamente vinculado, bytes A/R/G/B ou depth, valores de FP constantes (`FP_CONSTBUF`), saída do fragment shader e destino. O caso onde render target de cor e exportação depth ficaram byte-identicamente iguais continua exigindo uma explicação específica. A origem do erro de cor é **desconhecida** até provar a primeira etapa divergente.
+
+### 3. Testes de equivalência em vez de otimização por tentativa
+
+[B: `spu_equiv/run_eq.sh`](https://github.com/erikomis/infamous2-recomp/blob/61ad6ffd826dc6d1f32bf78ccbaa4ab98352f980/infamous2-lle/tools/spu_equiv/run_eq.sh) gera a mesma imagem SPU de duas formas e compara hashes dos estados, callbacks e transfers com registros/LS pseudorrandômicos. O projeto inclui um teste de erro deliberado para mostrar que o harness detecta divergências. O conceito é útil para testar **mudanças do lifter**, mas as amostras sintéticas não provam que o jogo completo foi preservado.
+
+[A: `spu_jobreplay.c`](https://github.com/ChaosTheory1075/infamous-ps5/blob/8e07d8ff373b19e37a9b6d45f6b437f48833754b/toolkit/added/runtime/spu/spu_jobreplay.c) registra tempos por job/overlay, contagem de dispatch sem lift e prevê captura/replay de DMA e canal. A abordagem permite identificar se o worker do contador atrasado é um job compilado, interpreter fallback ou não foi acordado. Os dumps de replay contêm **dados proprietários de execução**: manter somente localmente.
+
+[B: `log_triage.py`](https://github.com/erikomis/infamous2-recomp/blob/61ad6ffd826dc6d1f32bf78ccbaa4ab98352f980/infamous2-lle/tools/log_triage.py) agrupa erros de shader, render targets, texturas, SPU, hangs e hitch, gerando resumo legível e JSON. [`profile_report.py`](https://github.com/erikomis/infamous2-recomp/blob/61ad6ffd826dc6d1f32bf78ccbaa4ab98352f980/infamous2-lle/tools/profile_report.py) separa CPU ativa, thread parada, frames apresentados e tempo do interpretador SPU. O modelo de relatório é útil, mas não devemos interpretar um simples contador de draws como FPS ou tempo de simulação.
+
+### 4. C: renderização de iluminação como segunda fase, não gambiarra
+
+O [relatório do fork RPCS3 para Festival europeu NPEA00322](https://github.com/ttmx/rpcs3-infamous2/blob/22c57ff052c142667f7856ea44e123ab58776237/festival/README.md) apresenta otimizações de SSAO e iluminação com passagens GPU e redução de readback, mas alerta que sincronização relaxada de ZCULL gerou flicker. Seu diagnóstico da dependência CPU/GPU é relevante para nosso D3D12; não podemos portar constantes de endereços europeus para NPUA80657, nem usar tempos de Vulkan/Radeon como previsão de FPS Windows/RTX.
+
+### Como validar agora (só no PC com os arquivos legais)
+
+Após atualizar a branch do PR #6, na raiz do projeto:
+
+```bat
+py tools/inspect_spu_overlays.py data "private\game\EBOOT.elf" --json "out\spu-datamods.json"
+```
+
+A ferramenta **não extrai bytes** nem envia o jogo a lugar nenhum; informa cabeçalhos plausíveis. Marcador encontrado não prova que o bloco é executado. Se houver candidatos, correlacioná-los ao histórico de GET, LS e `SPU_INTERP_STATS`, e só então implementar o lift da imagem realmente necessária.
+
+**Gate principal do recomp:** provar o worker/job que não eleva um dos sete campos para o alvo; validar se existe fallback interpretado e se o código recompilado pós-interrupt continua correto. Só depois reavaliar FPS médio/p95. O target de 30 FPS continua aberto.
+
+**O que mudou de fato no PR #6:** varredura read-only do formato `DA7ABA5E` e quatro testes adicionais. Nenhuma alteração no runtime ou na função de renderização foi aplicada; nenhuma melhora de FPS foi alegada.
