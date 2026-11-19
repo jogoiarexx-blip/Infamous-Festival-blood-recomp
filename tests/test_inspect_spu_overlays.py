@@ -4,7 +4,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from inspect_spu_overlays import PROLOGUE, map_entries, parse_offsets, scan_spu_candidates
+from inspect_spu_overlays import (PROLOGUE, DATA_MAGIC, map_entries, parse_offsets,
+                                  scan_spu_candidates, scan_spu_data_modules)
 
 
 class ScanOverlayTests(unittest.TestCase):
@@ -55,6 +56,47 @@ class MapEntriesTests(unittest.TestCase):
             map_entries(bytes(32), bytes(32), [1])
         with self.assertRaisesRegex(ValueError, "repetidos"):
             parse_offsets("0x4,0x4")
+
+
+
+class DataModuleTests(unittest.TestCase):
+    @staticmethod
+    def make_data_module(code_off=0x30, image_size=0x80, code_end=0x70):
+        header = b"".join(v.to_bytes(4, "big") for v in
+                          (0x42000001, 0x43000002, 0x42000003, 0x43000004))
+        tail = DATA_MAGIC + code_off.to_bytes(4, "big")
+        tail += image_size.to_bytes(4, "big") + bytes(4)
+        tail += code_end.to_bytes(4, "big")
+        return header + tail + bytes(max(0, image_size - len(header) - len(tail)))
+
+    def test_finds_plausible_second_format(self):
+        data = bytes(64) + self.make_data_module() + bytes(16)
+        rows = scan_spu_data_modules(data)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["file_offset"], "0x40")
+        self.assertEqual(rows[0]["entry_offset"], "0x30")
+        self.assertFalse(rows[0]["truncated_file_image"])
+
+    def test_rejects_invalid_declared_layout(self):
+        for code_off, size, end in ((0x30, 0x80, 0x20),
+                                    (0x30, 0x80, 0x90),
+                                    (0x33, 0x80, 0x70),
+                                    (0x30, 0x50000, 0x70)):
+            with self.subTest(code_off=code_off, size=size, end=end):
+                self.assertEqual(scan_spu_data_modules(
+                    self.make_data_module(code_off, size, end)), [])
+
+    def test_reports_bss_tail_without_extracting_bytes(self):
+        raw = self.make_data_module()[:0x70]
+        rows = scan_spu_data_modules(raw)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["truncated_file_image"])
+        self.assertEqual(rows[0]["file_bytes_available"], 0x70)
+
+    def test_rejects_header_not_spu_ila_words(self):
+        raw = bytearray(self.make_data_module())
+        raw[0] = 0x50
+        self.assertEqual(scan_spu_data_modules(bytes(raw)), [])
 
 
 if __name__ == "__main__":
