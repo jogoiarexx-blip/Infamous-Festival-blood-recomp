@@ -149,7 +149,25 @@ A nova captura D3D12 contém 14 lotes: dois de geometria com 350 draws, cinco co
 
 A comparação sem readbacks, em 1280×720 e com `PS3_VERBOSE=0`, não mostrou ganho sustentado de velocidade: a cadência mediana dos lotes com 574 draws foi aproximadamente 0,477/s antes e 0,475/s depois. A GPU levou cerca de 73,9 e 75,0 ms nesses lotes, e 23,2 e 23,1 ms na composição. A espera explícita por GPU ficou perto de 0,02–0,03 ms; o intervalo antes da composição permaneceu perto de dois segundos. As amostras são de uma execução por versão e não demonstram diferença significativa de desempenho. As metas de 30/60 FPS continuam pendentes.
 
-Depois da correção, os logs também registram tentativas repetidas de despachar um job ainda não registrado, de 1.936 bytes e fingerprint `939A8ABE78393C5E`. Ele permanece um ponto de investigação; registrar um fingerprint sem recompilar e validar o conteúdo correspondente não é uma solução.
+Depois da correção do despacho, os logs identificaram um job adicional ainda não registrado. A preparação e a validação inicial dos jobs seguintes estão descritas abaixo.
+
+## Jobs adicionais da cena
+
+O preparador aceita agora `--scene-dumps`, além dos diretórios de boot e transição já existentes. Esse diretório deve conter as duas capturas reconhecidas pelo script. A geração verifica tamanho, fingerprint, entrada, instruções suportadas e destinos de salto antes de substituir os arquivos de saída. A execução completa do preparador gerou e registrou 11 jobs; a comparação dos nove jobs anteriores não encontrou alteração no código gerado.
+
+Os dois novos jobs foram recompilados e incluídos no executável local. O rastreio confirmou uma execução nativa do job de 1.936 bytes em aproximadamente 0,22 ms. Nessa execução de 120 segundos, as falhas repetidas de despacho não reapareceram. A execução nativa do outro job, de 6.032 bytes, ainda não foi observada nesta repetição. A validação completa dos resultados desses jobs contra o jogo original continua pendente.
+
+Exemplo, usando somente capturas locais:
+
+```powershell
+py tools/prepare_spurs_jobs.py --boot-dumps out/capturas-boot --later-dumps out/capturas-later --transition-dumps out/capturas-transition --scene-dumps out/capturas-scene
+```
+
+O executável foi recompilado a partir da saída do preparador. Uma etapa com poucos desenhos apresentou cerca de 31 apresentações/s e depois parou. Outra execução com captura registrou somente uma limpeza preta no backbuffer, sem continuar até os pontos de captura seguintes. Esse contador não representa 30 FPS sustentados na cena 3D nem uma próxima tela visualmente correta.
+
+Na repetição com timestamps, sem readbacks, os cinco lotes aquecidos com 574 draws tiveram mediana de cerca de 74,7 ms na GPU e 3,9 ms de gravação na CPU. A cadência mediana desses lotes foi aproximadamente 0,444/s, contra 0,477/s na medição anterior aos novos ajustes. Uma execução por versão, com progressão e esperas diferentes, não estabelece uma regressão nem um ganho de desempenho. A espera seguinte e a composição final continuam abertas.
+
+Somente o preparador, os testes, os patches e esta documentação são publicados. As capturas e os arquivos recompilados derivados do jogo permanecem locais.
 
 ## Aplicar as correções do runtime
 
