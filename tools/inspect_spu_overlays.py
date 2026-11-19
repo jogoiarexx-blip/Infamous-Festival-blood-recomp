@@ -77,11 +77,11 @@ def map_entries(source: bytes, target: bytes, offsets: list[int],
                 window_bytes: tuple[int, ...] = ENTRY_WINDOW_BYTES) -> list[dict]:
     """Require one aligned target match; never derive an offset from similarity."""
     if not source or not target or len(source) % 4 or len(target) % 4:
-        raise ValueError("Ambos os mÃ³dulos devem ser nÃ£o vazios e alinhados a 4 bytes")
+        raise ValueError("Ambos os módulos devem ser não vazios e alinhados a 4 bytes")
     result = []
     for offset in offsets:
         if offset % 4 or offset < 0 or offset >= len(source):
-            raise ValueError(f"Offset invÃ¡lido ou nÃ£o alinhado: 0x{offset:X}")
+            raise ValueError(f"Offset inválido ou não alinhado: 0x{offset:X}")
         entry = {"source_offset": f"0x{offset:X}", "status": "not_found",
                  "target_offset": None, "window_bytes": None}
         ambiguous = False
@@ -108,7 +108,7 @@ def map_entries(source: bytes, target: bytes, offsets: list[int],
 def parse_offsets(spec: str) -> list[int]:
     items = [x.strip() for x in spec.split(",")]
     if not items or any(not x for x in items):
-        raise ValueError("Informe pelo menos um offset, separado por vÃ­rgulas")
+        raise ValueError("Informe pelo menos um offset, separado por vírgulas")
     offsets = [int(item, 0) for item in items]
     if len(offsets) != len(set(offsets)):
         raise ValueError("Offsets repetidos")
@@ -119,16 +119,16 @@ def cli() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="command", required=True)
     scan = sub.add_parser("scan", help="Buscar candidatos a overlays SPU em EBOOT.elf local")
-    scan.add_argument("eboot", type=Path, help="Arquivo ELF descriptografado local (nÃ£o enviar)")
+    scan.add_argument("eboot", type=Path, help="Arquivo ELF descriptografado local (não enviar)")
     scan.add_argument("--va-offset", type=lambda s: int(s, 0),
-                      help="Deslocamento VA manual, derivado de PT_LOAD; nÃ£o assumir 0x10000")
+                      help="Deslocamento VA manual, derivado de PT_LOAD; não assumir 0x10000")
     scan.add_argument("--json", type=Path, help="Salvar somente offsets em JSON (usar out/)")
-    datamods = sub.add_parser("data", help="Localizar possÃ­veis mÃ³dulos WWS DA7ABA5E no ELF local")
+    datamods = sub.add_parser("data", help="Localizar possíveis módulos WWS DA7ABA5E no ELF local")
     datamods.add_argument("eboot", type=Path, help="ELF descriptografado local")
-    datamods.add_argument("--json", type=Path, help="RelatÃ³rio somente com metadados em out/")
+    datamods.add_argument("--json", type=Path, help="Relatório somente com metadados em out/")
     entries = sub.add_parser("entries", help="Mapear entrypoints por janelas exatas")
-    entries.add_argument("source", type=Path, help="MÃ³dulo SPU binÃ¡rio local")
-    entries.add_argument("target", type=Path, help="Outro mÃ³dulo SPU binÃ¡rio local")
+    entries.add_argument("source", type=Path, help="Módulo SPU binário local")
+    entries.add_argument("target", type=Path, help="Outro módulo SPU binário local")
     entries.add_argument("--offsets", required=True, help="Offsets de BYTE relativos ao arquivo, ex. 0x30,0x15280")
     entries.add_argument("--json", type=Path, help="Salvar somente offsets em JSON (usar out/)")
     args = ap.parse_args()
@@ -143,9 +143,9 @@ def cli() -> int:
                     row["guest_ea_assuming_va_offset"] = f"0x{x + args.va_offset:X}"
             for row in rows:
                 print("candidate", row)
-            print(f"{len(rows)} candidatos; verifique mÃ³dulos, limites e offsets de load")
+            print(f"{len(rows)} candidatos; verifique módulos, limites e offsets de load")
             result = {"mode": "scan", "source": str(args.eboot),
-                      "warning": "Assinatura heurÃ­stica; NÃƒO comprova mÃ³dulo SPU nem compatibilidade",
+                      "warning": "Assinatura heurística; NÃO comprova módulo SPU nem compatibilidade",
                       "candidates": rows}
         elif args.command == "data":
             rows = scan_spu_data_modules(args.eboot.read_bytes())
@@ -162,7 +162,7 @@ def cli() -> int:
                 print(row)
             result = {"mode": "entries",
                       "source": str(args.source), "target": str(args.target),
-                      "warning": "SÃ³ janelas exatas Ãºnicas; verificar controle de fluxo, base LS e relocations",
+                      "warning": "Só janelas exatas únicas; verificar controle de fluxo, base LS e relocations",
                       "entries": rows}
     except (OSError, ValueError) as exc:
         ap.error(str(exc))
@@ -170,7 +170,7 @@ def cli() -> int:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n",
                              encoding="utf-8")
-        print(f"RelatÃ³rio salvo em: {args.json}")
+        print(f"Relatório salvo em: {args.json}")
     return 0
 
 

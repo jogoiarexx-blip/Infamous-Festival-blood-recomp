@@ -13,4 +13,4 @@ def check_report_destination(output: Path | None, inputs: Iterable[Path]) -> Non
         if destination == source.resolve() or (
                 destination.exists() and source.exists()
                 and destination.samefile(source)):
-            raise ValueError("O relatÃ³rio JSON nÃ£o pode sobrescrever um arquivo de entrada")
+            raise ValueError("O relatório JSON não pode sobrescrever um arquivo de entrada")
