@@ -1,0 +1,32 @@
+--- a/runtime/spu/spu_channels.c
++++ b/runtime/spu/spu_channels.c
+@@ -3008,25 +3008,10 @@
+             }
+         }
+     }
+-    /* WWS job-code fallback: the jobmanager PM (image 2) stages each job's
+-     * code into an LS buffer and branches into it. The staged blobs are
+-     * lifted as their own images at their LS residence addresses (image 1 =
+-     * job_wws_7BD900 at the 0x14400-region buffer); the PM's own table can
+-     * never contain them. On a policy-module miss inside the job-buffer
+-     * range, retry against the job image before falling to the interpreter. */
+-    /* WWS job-code fallback -- but ONLY when real code is staged at the target.
+-     * A PM job whose code buffer is empty (the {0xA400,0} null-code placeholder)
+-     * must NOT resolve to image-1's unrelated function that happens to share the
+-     * file offset: that ran garbage, the job did no work, and its ring slot
+-     * never advanced -> the loader's job ring deadlocked. An empty buffer falls
+-     * through to the null-job handling below. */
+-    if (!fn && ctx->image_id == 2 && ctx->policy_mode &&
+-        ctx->pc >= 0x4000 && ctx->pc < 0x3E000) {
+-        uint32_t w0 = ((uint32_t)ctx->ls[ctx->pc] << 24) | ((uint32_t)ctx->ls[ctx->pc+1] << 16) |
+-                      ((uint32_t)ctx->ls[ctx->pc+2] << 8) | ctx->ls[ctx->pc+3];
+-        if (w0 != 0)
+-            fn = spu_lookup(ctx->pc, 1);
+-    }
++    /* A policy-module miss does not identify a job image. Image ids belong
++     * to each port's registry: image 1 can be an unrelated task whose code
++     * shares this LS address. Nonzero live bytes prove no such identity.
++     * Keep an unresolved target on the interpreter's live-byte path. */
+     /* Null-code PM job (empty buffer): return control to the dispatcher's own
+      * host-call bracket so its post-job continuation runs the completion
+      * bookkeeping -- exactly as a real job that did nothing and returned.

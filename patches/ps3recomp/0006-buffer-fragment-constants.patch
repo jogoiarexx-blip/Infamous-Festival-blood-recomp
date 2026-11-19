@@ -1,0 +1,101 @@
+diff --git a/libs/video/rsx_d3d12_backend.c b/libs/video/rsx_d3d12_backend.c
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -71,9 +71,13 @@
+  * own texScale/offset uniforms, so one per-frame snapshot ran every pass
+  * with the LAST pass's constants. */
+ #define VP_CB_STRIDE      8448
+-/* b1 per-draw FP slot: rsx_texscale[4] + rsx_alphatest + fp_k[64]
+- * = 69 float4 = 1104 B, rounded to D3D12's 256-byte CBV alignment. */
+-#define VP_FPCB_STRIDE    1280
++/* b1: four texture scales, legacy alpha state, inline fragment constants,
++ * then a zeroed fp_alpha for the buffered emitter's window-position helper. */
++#define VP_FP_UCODE_BYTES 4096u
++#define VP_FP_CONSTS (VP_FP_UCODE_BYTES / 32u)
++#define VP_FP_CONST_BASE 5u
++#define VP_FP_ALPHA_SLOT (VP_FP_CONST_BASE + VP_FP_CONSTS)
++#define VP_FPCB_STRIDE (((VP_FP_ALPHA_SLOT + 1u) * 16u + 255u) & ~255u)
+ #define VERTEX_STRIDE       36  /* bytes per host vertex: pos3 + col4 + uv2 */
+ 
+ typedef struct {
+@@ -2342,25 +2346,25 @@
+     u32 off = cellGcmResolveLocated((fp_addr & 0x3u) == 1, fp_addr & ~0x3u);
+     if (off == 0xFFFFFFFFu) return NULL;
+ 
+-    /* Content hash: inline constants are patched in place per frame (wave's
+-     * stamp), so identity is the BYTES, not the address. */
+-    /* Hash the CODE, not the constants: with fp_k[] hoisted into the per-draw
+-     * constant buffer the compiled shader is invariant under constant changes,
+-     * so hashing them made the pipeline key move every draw. */
++    static int consts_inline = -1;
++    if (consts_inline < 0) {
++        const char* e = getenv("FP_CONSTBUF");
++        consts_inline = e && e[0] == '0';
++    }
++    const int buffered = !consts_inline && s_d3d.vp_fpcb_mapped;
++    /* Literal mode needs the payload in the key. Buffered mode takes those
++     * values from the draw, so changing them does not require a new pipeline. */
+     u32 uhash;
+     {
+-        u32 usz = rsx_fp_program_size(vm_base + off, 4096);
++        u32 usz = rsx_fp_program_size(vm_base + off, VP_FP_UCODE_BYTES);
+         if (usz == 0) usz = 64;
+         s_perf_pso_hashbytes += (int)usz;
+-        static int consts_inline = -1;
+-        if (consts_inline < 0) { const char* e = getenv("FP_CONSTBUF");
+-                                 consts_inline = (e && e[0] == '0') ? 1 : 0; }
+-        if (consts_inline) {
++        if (!buffered) {
+             uhash = 2166136261u;
+             const u8* up = vm_base + off;
+             for (u32 i = 0; i < usz; i++) { uhash ^= up[i]; uhash *= 16777619u; }
+         } else {
+-            uhash = rsx_fp_code_hash(vm_base + off, 4096);
++            uhash = rsx_fp_code_hash(vm_base + off, VP_FP_UCODE_BYTES);
+         }
+     }
+ 
+@@ -2445,7 +2449,24 @@
+     static int ctrl_auto = -1;
+     if (ctrl_auto < 0) ctrl_auto = getenv("RSX_FP_CTRL_AUTO") ? 1 : 0;
+     u32 fp_ctrl = ctrl_auto ? RSX_FP_CTRL_AUTO : ctrl;
+-    int n = rsx_fp_decompile(vm_base + off, 4096, fp_ctrl, hlsl, sizeof(hlsl));
++    int n;
++    if (buffered) {
++        u32 count = 0;
++        n = rsx_fp_decompile_buffered_ex(vm_base + off, VP_FP_UCODE_BYTES, fp_ctrl, 0,
++                                        hlsl, sizeof(hlsl), &count);
++        if (n > 0) {
++            char decl[64], packed[96], alpha[96];
++            const u32 size = count ? count : 1;
++            snprintf(decl, sizeof(decl), "float4 fp_constants[%u];", size);
++            snprintf(packed, sizeof(packed), "float4 fp_constants[%u] : packoffset(c%u);",
++                     size, VP_FP_CONST_BASE);
++            snprintf(alpha, sizeof(alpha), "float4 fp_alpha : packoffset(c%u);", VP_FP_ALPHA_SLOT);
++            hlsl_replace_all(hlsl, sizeof(hlsl), decl, packed);
++            hlsl_replace_all(hlsl, sizeof(hlsl), "float4 fp_alpha;", alpha);
++        }
++    } else {
++        n = rsx_fp_decompile(vm_base + off, VP_FP_UCODE_BYTES, fp_ctrl, hlsl, sizeof(hlsl));
++    }
+     if (n <= 0) { static int _e=0; if(PS3_LOG_FIRST(_e, 16)) printf("[FP] decompile fail (fp=0x%08X)\n", fp_addr); return NULL; }
+     if (unnorm_mask) {
+         rsx_fp_apply_unnorm_scale(hlsl, sizeof(hlsl), unnorm_mask, (const u32 (*)[3])unnorm_dim, cube_mask, 0);
+@@ -3503,6 +3524,7 @@
+     if (s_d3d.vp_fpcb_mapped) {
+         float* ts = (float*)((char*)s_d3d.vp_fpcb_mapped
+             + ((u64)s_d3d.vp_parity * MAX_DRAWS + slot) * VP_FPCB_STRIDE);
++        memset(&ts[VP_FP_ALPHA_SLOT * 4u], 0, 16);
+         for (int _u = 0; _u < 4; _u++) {
+             float sx = 1.0f, sy = 1.0f;
+             if (dr && dr->tex[_u].set && (dr->tex[_u].fmt & 0x40) &&
+@@ -3540,7 +3562,8 @@
+             u32 foff = cellGcmResolveLocated((dr->fp_addr & 0x3u) == 1,
+                                              dr->fp_addr & ~0x3u);
+             if (vm_base && foff != 0xFFFFFFFFu)
+-                rsx_fp_extract_consts(vm_base + foff, 4096, &ts[20], 64);   /* fp_k[64] */
++                rsx_fp_extract_consts(vm_base + foff, VP_FP_UCODE_BYTES,
++                                      &ts[VP_FP_CONST_BASE * 4u], VP_FP_CONSTS);
+             /* FPK_DBG=1: the fragment constants as the shader will see them.
+              * A program whose only output is fp_k[0].xxxx renders black if
+              * those constants never arrive, which looks identical from the

@@ -1,0 +1,90 @@
+diff --git a/libs/video/rsx_d3d12_backend.c b/libs/video/rsx_d3d12_backend.c
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -125,6 +125,7 @@
+     int vs_idx;         /* VPVSEntry slot for this draw's vertex program (-1 = primary) */
+     int blend;          /* guest blend enable at draw time */
+     u32 blend_key;      /* packed guest blend state (factors+equation), PSO key */
++    ID3D12PipelineState* prepared_pso; /* reference held from preparation through submission */
+     /* Render-to-texture: which colour surface this op targets. 0 = a display
+      * buffer (the swap-chain backbuffer); else the resolved vm offset of an
+      * offscreen surface (demosaic chains its effect passes through local-
+@@ -4567,6 +4568,9 @@
+     s_d3d.cmd_list->lpVtbl->ResourceBarrier(s_d3d.cmd_list, 1, &gb);
+ }
+ 
++static ID3D12PipelineState* submitted_psos[MAX_DRAWS];
++static u32 submitted_pso_count;
++
+ static void render_frame(void)
+ {
+     double _rf0 = perf_on() ? perf_now() : 0.0;
+@@ -4579,6 +4583,9 @@
+      * polygons). These workloads are a few draws/frame, so full serialisation
+      * costs little. */
+     wait_for_gpu();
++    for (u32 i = 0; i < submitted_pso_count; i++)
++        submitted_psos[i]->lpVtbl->Release(submitted_psos[i]);
++    submitted_pso_count = 0;
+     rdoc_frame_begin(s_d3d.draw_count);
+ 
+     /* Compile the real vertex program once its microcode is captured, and keep
+@@ -5095,12 +5102,13 @@
+         double _ps0 = perf_on() ? perf_now() : 0.0;
+         u32 unnorm_dim[16][3];
+         u32 unnorm_mask = dr_unnorm_units(dr, unnorm_dim);
+-        if (dr->fp_addr) vp_get_fp_pso(dr->vs_idx, dr->fp_addr, dr->blend_key,
++        dr->prepared_pso = dr->fp_addr ? vp_get_fp_pso(dr->vs_idx, dr->fp_addr, dr->blend_key,
+                                        dr_num_rts(dr),
+                                        dr->rt_off ? rsx_surface_dxgi(dr->rt_fmt)
+                                                   : DXGI_FORMAT_R8G8B8A8_UNORM,
+                                        dr->fp_ctrl, dr->cmask, dr->cull, dr_cube_mask(dr),
+-                                       unnorm_mask, unnorm_dim, dr->zs_key);
++                                       unnorm_mask, unnorm_dim, dr->zs_key) : NULL;
++        if (dr->prepared_pso) dr->prepared_pso->lpVtbl->AddRef(dr->prepared_pso);
+         if (perf_on()) s_perf_pso += perf_now() - _ps0;
+     }
+ 
+@@ -5475,16 +5483,7 @@
+                 }
+                 /* Per-draw pipeline: prefer the guest's own compiled FP; fall
+                  * back to the hardcoded atlas/colour PS pair. */
+-                u32 unnorm_dim[16][3];
+-                u32 unnorm_mask = dr_unnorm_units(dr, unnorm_dim);
+-                ID3D12PipelineState* dpso =
+-                    dr->fp_addr ? vp_get_fp_pso(dr->vs_idx, dr->fp_addr, dr->blend_key,
+-                                                dr_num_rts(dr),
+-                                                dr->rt_off ? rsx_surface_dxgi(dr->rt_fmt)
+-                                                           : DXGI_FORMAT_R8G8B8A8_UNORM,
+-                                                dr->fp_ctrl, dr->cmask, dr->cull,
+-                                                dr_cube_mask(dr),
+-                                                unnorm_mask, unnorm_dim, dr->zs_key) : NULL;
++                ID3D12PipelineState* dpso = dr->prepared_pso;
+                 s_d3d.cmd_list->lpVtbl->SetPipelineState(s_d3d.cmd_list,
+                                                          dpso ? dpso : vpso);
+                 s_d3d.cmd_list->lpVtbl->OMSetStencilRef(s_d3d.cmd_list, dr->stencil_ref & 0xFFu);
+@@ -5873,6 +5872,14 @@
+     s_d3d.cmd_list->lpVtbl->Close(s_d3d.cmd_list);
+     ID3D12CommandList* cmd_lists[] = {(ID3D12CommandList*)s_d3d.cmd_list};
+     s_d3d.cmd_queue->lpVtbl->ExecuteCommandLists(s_d3d.cmd_queue, 1, cmd_lists);
++    /* Hold prepared PSOs through GPU completion, including cache evictions. */
++    for (u32 d = 0; d < s_dbg_last_draws && d < MAX_DRAWS; d++) {
++        D3D12DrawRecord* dr = &s_d3d.draws[d];
++        if (dr->is_vp && !dr->is_clear && dr->prepared_pso) {
++            submitted_psos[submitted_pso_count++] = dr->prepared_pso;
++            dr->prepared_pso = NULL;
++        }
++    }
+ 
+     /* D3D12_IQ=1: drain the debug layer's message queue after submitting the
+      * frame. The legacy (is_vp=0) DrawInstanced path silently produced ZERO
+@@ -8028,6 +8035,9 @@
+     if (!s_d3d.initialized) return;
+ 
+     wait_for_gpu();
++    for (u32 i = 0; i < submitted_pso_count; i++)
++        submitted_psos[i]->lpVtbl->Release(submitted_psos[i]);
++    submitted_pso_count = 0;
+ 
+     /* Release D3D12 resources */
+     if (s_d3d.vertex_buffer) {

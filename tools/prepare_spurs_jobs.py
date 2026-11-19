@@ -39,6 +39,10 @@ TRANSITION_JOBS = (
     (0x5EC85F9D752F82D1, 18960, "fobjob5EC8_", 11, None),
     (0x7FD662F57F44EC4C, 2192, "fobjob7FD6_", 12, None),
 )
+SCENE_JOBS = (
+    (0xE557DC3BB8031540, 6032, "fobjobE557_", 13, None),
+    (0x939A8ABE78393C5E, 1936, "fobjob939A_", 14, None),
+)
 
 
 def fp_fnv(data: bytes) -> int:
@@ -61,11 +65,15 @@ def main() -> None:
                         help="Capture directory containing the later boot job.")
     parser.add_argument("--transition-dumps", type=Path,
                         help="Capture directory containing the three post-splash jobs.")
+    parser.add_argument("--scene-dumps", type=Path,
+                        help="Capture directory containing the two additional scene jobs.")
     args = parser.parse_args()
     if args.later_dumps is not None and args.boot_dumps is None:
         parser.error("--later-dumps requires --boot-dumps")
     if args.transition_dumps is not None and args.later_dumps is None:
         parser.error("--transition-dumps requires --later-dumps")
+    if args.scene_dumps is not None and args.transition_dumps is None:
+        parser.error("--scene-dumps requires --transition-dumps")
     root = Path(__file__).resolve().parent.parent
     tools = root.parent / "ps3recomp" / "tools"
     spu_dir = root / "out/port/spu"
@@ -86,6 +94,8 @@ def main() -> None:
             jobs.extend((args.later_dumps, job) for job in LATER_BOOT_JOBS)
         if args.transition_dumps is not None:
             jobs.extend((args.transition_dumps, job) for job in TRANSITION_JOBS)
+        if args.scene_dumps is not None:
+            jobs.extend((args.scene_dumps, job) for job in SCENE_JOBS)
         for dump_dir, (fp, size, prefix, image_id, code_end) in jobs:
             raw_path = dump_dir / f"spujob_{fp:016X}_{size}.bin"
             if not raw_path.is_file():
@@ -139,3 +149,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

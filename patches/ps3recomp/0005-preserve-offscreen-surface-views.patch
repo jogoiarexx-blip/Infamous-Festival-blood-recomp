@@ -1,0 +1,202 @@
+diff --git a/libs/video/rsx_d3d12_backend.c b/libs/video/rsx_d3d12_backend.c
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -1742,7 +1742,17 @@
+     for (int i = 0; i < MAX_OFF_RTS; i++) {
+         OffRT* r = &s_d3d.off_rt[i];
+         if (!r->res || !r->used) continue;
+-        snprintf(path, sizeof path, "%s/rt_%08X.bmp", dir, r->off);
++        int alias = 0;
++        for (int j = 0; j < i; j++) {
++            if (s_d3d.off_rt[j].res && s_d3d.off_rt[j].used && s_d3d.off_rt[j].off == r->off) {
++                alias = 1;
++                break;
++            }
++        }
++        if (alias)
++            snprintf(path, sizeof path, "%s/rt_%08X_%ux%u_%u.bmp", dir, r->off, r->w, r->h, r->dxgi);
++        else
++            snprintf(path, sizeof path, "%s/rt_%08X.bmp", dir, r->off);
+         cap_readback_write(r->res, r->w, r->h, r->dxgi, r->st, fi, path);
+     }
+     printf("[RSXCAP] frame %llu -> %s (%u ops)\n",
+@@ -3736,22 +3746,24 @@
+     }
+ }
+ 
++static int off_rt_find_view(u32 off, u32 w, u32 h, u32 dxgi)
++{
++    if (!off) return -1;
++    for (int i = 0; i < MAX_OFF_RTS; i++) {
++        if (s_d3d.off_rt[i].res && s_d3d.off_rt[i].off == off &&
++            (!w || s_d3d.off_rt[i].w == w) && (!h || s_d3d.off_rt[i].h == h) &&
++            (!dxgi || s_d3d.off_rt[i].dxgi == dxgi)) return i;
++    }
++    return -1;
++}
++
+ static int off_rt_find(u32 off)
+ {
+-    if (!off) return -1;
+-    for (int i = 0; i < MAX_OFF_RTS; i++)
+-        if (s_d3d.off_rt[i].res && s_d3d.off_rt[i].off == off) return i;
+-    return -1;
+-}
+-
+-/* Ensure an RT resource exists for this surface; (re)creates the RTV at
+- * rt_rtv_heap[i] and the SRV at srv_heap[RT_SRV_BASE+i]. */
+-static int off_rt_get(u32 off, u32 w, u32 h, u32 rsx_fmt)
+-{
+-    if (!off || !s_d3d.rt_rtv_heap || !s_d3d.srv_heap) return -1;
+-    if (!w) w = s_d3d.width;
+-    if (!h) h = s_d3d.height;
+-    DXGI_FORMAT want_fmt = rsx_surface_dxgi(rsx_fmt);
++    return off_rt_find_view(off, 0, 0, 0);
++}
++
++static DXGI_FORMAT off_rt_format(u32 rsx_fmt)
++{
+     /* RT_FORCE_RGBA8=1: allocate every offscreen target as R8G8B8A8 rather than
+      * its native format. A title whose final composite reads a half-float
+      * surface cannot be shown with a plain CopyTextureRegion, and giving it an
+@@ -3759,33 +3771,39 @@
+      * copy. A stopgap for looking at the frame, not a rendering fix. */
+     { static int f8 = -1;
+       if (f8 < 0) { const char* e = getenv("RT_FORCE_RGBA8"); f8 = e ? atoi(e) : 0; }
+-      if (f8) want_fmt = DXGI_FORMAT_R8G8B8A8_UNORM; }
+-    int slot = off_rt_find(off);
+-    if (slot >= 0) {
+-        OffRT* r = &s_d3d.off_rt[slot];
+-        if (r->w == w && r->h == h && r->dxgi == (u32)want_fmt) { r->used = 1; return slot; }
+-        /* The frame in flight still references this resource -- releasing it here
+-         * is "was deleted prior to closing the command list" (D3D12 message 921),
+-         * and every draw recorded against it silently lands nowhere while the
+-         * replacement reads back empty. Let the GPU finish first. Recreations are
+-         * rare (a surface changing size), so the stall costs nothing. */
+-        wait_for_gpu();
+-        r->res->lpVtbl->Release(r->res); r->res = NULL;   /* dims/format changed */
+-        if (r->up) { r->up->lpVtbl->Release(r->up); r->up = NULL; }
+-    } else {
++      if (f8) return DXGI_FORMAT_R8G8B8A8_UNORM; }
++    return rsx_surface_dxgi(rsx_fmt);
++}
++
++static int off_rt_draw_view(u32 off, const D3D12DrawRecord* draw)
++{
++    if (!off) return -1;
++    return off_rt_find_view(off, draw->rt_w ? draw->rt_w : s_d3d.width,
++                          draw->rt_h ? draw->rt_h : s_d3d.height, off_rt_format(draw->rt_fmt));
++}
++
++/* Keep distinct views alive when a batch uses overlapping surface offsets. */
++static int off_rt_get(u32 off, u32 w, u32 h, u32 rsx_fmt)
++{
++    if (!off || !s_d3d.rt_rtv_heap || !s_d3d.srv_heap) return -1;
++    if (!w) w = s_d3d.width;
++    if (!h) h = s_d3d.height;
++    DXGI_FORMAT want_fmt = off_rt_format(rsx_fmt);
++    int slot = off_rt_find_view(off, w, h, (u32)want_fmt);
++    if (slot >= 0) { s_d3d.off_rt[slot].used = 1; return slot; }
++
++    for (int i = 0; i < MAX_OFF_RTS; i++)
++        if (!s_d3d.off_rt[i].res) { slot = i; break; }
++    if (slot < 0) {
+         for (int i = 0; i < MAX_OFF_RTS; i++)
+-            if (!s_d3d.off_rt[i].res) { slot = i; break; }
+-        if (slot < 0) {   /* evict an entry not used this frame */
+-            for (int i = 0; i < MAX_OFF_RTS; i++)
+-                if (!s_d3d.off_rt[i].used) { slot = i; break; }
+-            if (slot < 0) return -1;
+-            wait_for_gpu();   /* same hazard as above: the frame may still use it */
+-            s_d3d.off_rt[slot].res->lpVtbl->Release(s_d3d.off_rt[slot].res);
+-            s_d3d.off_rt[slot].res = NULL;
+-            if (s_d3d.off_rt[slot].up) {
+-                s_d3d.off_rt[slot].up->lpVtbl->Release(s_d3d.off_rt[slot].up);
+-                s_d3d.off_rt[slot].up = NULL;
+-            }
++            if (!s_d3d.off_rt[i].used) { slot = i; break; }
++        if (slot < 0) return -1;
++        wait_for_gpu();   /* unused in this batch, but submitted work may reference it */
++        s_d3d.off_rt[slot].res->lpVtbl->Release(s_d3d.off_rt[slot].res);
++        s_d3d.off_rt[slot].res = NULL;
++        if (s_d3d.off_rt[slot].up) {
++            s_d3d.off_rt[slot].up->lpVtbl->Release(s_d3d.off_rt[slot].up);
++            s_d3d.off_rt[slot].up = NULL;
+         }
+     }
+     OffRT* r = &s_d3d.off_rt[slot];
+@@ -4803,6 +4821,21 @@
+      * too, and the colour copy of each one a draw samples: both settle their
+      * size here, before any draw's SRV window points at them. */
+     for (int _i = 0; _i < MAX_OFF_RTS; _i++) s_d3d.off_rt[_i].used = 0;
++    /* Protect existing views that this batch will draw to or sample from eviction. */
++    for (u32 d = 0; d < s_d3d.draw_count && d < MAX_DRAWS; d++) {
++        const D3D12DrawRecord* dr = &s_d3d.draws[d];
++        if (!dr->is_vp) continue;
++        const u32 offsets[] = {dr->rt_off, dr->rt_mrt[0], dr->rt_mrt[1], dr->rt_mrt[2]};
++        for (int m = 0; m < 4; m++) {
++            const int rt = off_rt_draw_view(offsets[m], dr);
++            if (rt >= 0) s_d3d.off_rt[rt].used = 1;
++        }
++        for (int u = 0; u < 16 && !dr->is_clear; u++) {
++            if (!dr->tex[u].set) continue;
++            const int rt = off_rt_find_view(dr->tex[u].raw, dr->tex[u].w, dr->tex[u].h, 0);
++            if (rt >= 0) s_d3d.off_rt[rt].used = 1;
++        }
++    }
+     for (u32 _d = 0; _d < s_d3d.draw_count && _d < MAX_DRAWS; _d++) {
+         D3D12DrawRecord* dr = &s_d3d.draws[_d];
+         if (dr->is_vp && dr->rt_off)
+@@ -4819,8 +4852,11 @@
+         for (int _u = 0; _u < 16 && dr->is_vp && !dr->is_clear; _u++) {
+             const int ds = dr->tex[_u].set ? off_ds_find(dr->tex[_u].raw) : -1;
+             if (ds < 0) continue;
+-            s_d3d.off_ds[ds].last_frame = s_d3d.frame_count;
+-            off_rt_get(dr->tex[_u].raw, s_d3d.off_ds[ds].w, s_d3d.off_ds[ds].h, 0x08u);
++            OffDS* depth = &s_d3d.off_ds[ds];
++            depth->last_frame = s_d3d.frame_count;
++            if (off_rt_find_view(dr->tex[_u].raw, depth->w, depth->h, DXGI_FORMAT_R8G8B8A8_UNORM) < 0)
++                depth->conv_gen = depth->gen - 1;
++            off_rt_get(dr->tex[_u].raw, depth->w, depth->h, 0x08u);
+         }
+     }
+ 
+@@ -4917,13 +4953,18 @@
+         for (int _u = 0; _u < DRAW_SRV_STRIDE; _u++) {
+             u32 wslot = DRAW_SRV_BASE + _d * DRAW_SRV_STRIDE + (u32)_u;
+             dr->tex_rt[_u] = -1;
+-            const int rt = dr->tex[_u].set ? off_rt_find(dr->tex[_u].raw) : -1;
++            int rt = -1;
++            if (dr->tex[_u].set) {
++                rt = off_rt_find_view(dr->tex[_u].raw, dr->tex[_u].w, dr->tex[_u].h, 0);
++                if (rt < 0) rt = off_rt_find(dr->tex[_u].raw);
++            }
+             /* A depth surface read as a texture: its colour copy (made in the
+              * RT pre-pass), refreshed from the depth buffer just before this
+              * draw (ds_convert). */
+             if (dr->tex[_u].set) {
+                 const int ds = off_ds_find(dr->tex[_u].raw);
+-                const int crt = ds >= 0 ? rt : -1;
++                const int crt = ds >= 0 ? off_rt_find_view(dr->tex[_u].raw, s_d3d.off_ds[ds].w,
++                                                          s_d3d.off_ds[ds].h, DXGI_FORMAT_R8G8B8A8_UNORM) : -1;
+                 if (crt >= 0) {
+                     dr->tex_rt[_u] = crt;
+                     dr->tex_ds[_u] = ds;
+@@ -5266,14 +5307,12 @@
+                 /* Render-to-texture: retarget when this op's surfaces differ.
+                  * A pass with a depth surface binds its OffDS; one without
+                  * shares a single depth buffer, cleared per switch. */
+-                int want  = (dr->rt_off && !dr->no_color) ? off_rt_find(dr->rt_off) : -1;
+-                /* Remember where geometry actually went: off_rt_find() matches
+-                 * on offset alone and slots share offsets at different sizes,
+-                 * so the composite cannot just look the source up by address. */
++                int want = dr->no_color ? -1 : off_rt_draw_view(dr->rt_off, dr);
++                /* Remember the exact surface for the last-drawn composite. */
+                 if (want >= 0) { s_last_drawn_slot = want; s_last_drawn_off = dr->rt_off; }
+                 int wantm[3];
+                 for (int _m = 0; _m < 3; _m++)
+-                    wantm[_m] = (dr->rt_mrt[_m] && !dr->no_color) ? off_rt_find(dr->rt_mrt[_m]) : -1;
++                    wantm[_m] = dr->no_color ? -1 : off_rt_draw_view(dr->rt_mrt[_m], dr);
+                 /* The draw's own depth surface, or the shared buffer for a pass
+                  * without one (and for display targets, as before). */
+                 const int wantz = (dr->zeta_off && (want >= 0 || dr->no_color))

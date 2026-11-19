@@ -1,0 +1,40 @@
+diff --git a/libs/video/rsx_d3d12_backend.c b/libs/video/rsx_d3d12_backend.c
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -4917,12 +4917,13 @@
+         for (int _u = 0; _u < DRAW_SRV_STRIDE; _u++) {
+             u32 wslot = DRAW_SRV_BASE + _d * DRAW_SRV_STRIDE + (u32)_u;
+             dr->tex_rt[_u] = -1;
++            const int rt = dr->tex[_u].set ? off_rt_find(dr->tex[_u].raw) : -1;
+             /* A depth surface read as a texture: its colour copy (made in the
+              * RT pre-pass), refreshed from the depth buffer just before this
+              * draw (ds_convert). */
+             if (dr->tex[_u].set) {
+                 const int ds = off_ds_find(dr->tex[_u].raw);
+-                const int crt = ds >= 0 ? off_rt_find(dr->tex[_u].raw) : -1;
++                const int crt = ds >= 0 ? rt : -1;
+                 if (crt >= 0) {
+                     dr->tex_rt[_u] = crt;
+                     dr->tex_ds[_u] = ds;
+@@ -4932,9 +4933,12 @@
+                 }
+             }
+             /* A display-sized B8 texture can be a CPU/SPU-written luma plane.
+-             * It still needs its own guest memory upload. */
++             * It still needs its own guest memory upload. A matching offscreen
++             * surface also takes precedence over the size-based screen copy. */
+             if (dr->tex[_u].set && s_screen_copy &&
+                 dr->tex[_u].w == s_d3d.width && dr->tex[_u].h == s_d3d.height &&
++                (rt < 0 || s_d3d.off_rt[rt].w != dr->tex[_u].w ||
++                           s_d3d.off_rt[rt].h != dr->tex[_u].h) &&
+                 (dr->tex[_u].fmt & ~0x60u) != 0x81u) {
+                 static int en = -1;
+                 if (en < 0) { const char* e = getenv("SCREEN_AS_TEX"); en = e ? atoi(e) : 1; }
+@@ -4971,7 +4975,6 @@
+                 }
+             }
+             if (dr->tex[_u].set) {
+-                int rt = off_rt_find(dr->tex[_u].raw);
+                 if (rt >= 0) {
+                     dr->tex_rt[_u] = rt;
+                     srv_write(wslot, s_d3d.off_rt[rt].res, (DXGI_FORMAT)s_d3d.off_rt[rt].dxgi,
