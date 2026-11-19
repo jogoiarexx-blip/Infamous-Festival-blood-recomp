@@ -19,7 +19,7 @@ jobs:
           python-version: '3.12'
       - name: Sintaxe Python
         run: python -m compileall -q tools tests
-      - name: Testes sintÃ©ticos (sem arquivos do jogo)
+      - name: Testes sintéticos (sem arquivos do jogo)
         run: python -m unittest discover -s tests -v
 
   spu-runtime:
@@ -38,7 +38,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Aplicar a sÃ©rie pÃºblica de patches
+      - name: Aplicar a série pública de patches
         shell: bash
         run: |
           set -euo pipefail
@@ -46,6 +46,6 @@ jobs:
             git -C out/ci-sdk apply --check "$GITHUB_WORKSPACE/$patch"
             git -C out/ci-sdk apply "$GITHUB_WORKSPACE/$patch"
           done
-      - name: RegressÃ£o SPU com instruÃ§Ãµes sintÃ©ticas
+      - name: Regressão SPU com instruções sintéticas
         run: python tools/test_spu_policy_image_collision.py --sdk out/ci-sdk --cc gcc --output-dir out/ci-spu
 
