@@ -129,6 +129,28 @@ Os objetos da thread `SPU Light Task Kicker` em `0x00B51E80` registraram consult
 
 Um terceiro boot habilitou `SPU_ATOM_EA=00B50C00`, `SPU_ATOM_FULL=2` e um limite de 8.000 registros. O policy module de imagem 2 acessou essa linha pelo helper em LS `0x0239C`, com retornos `0x02C68` e `0x02FE8`. O rastreio também mostrou commits PUTLLC bem-sucedidos. O limite foi atingido durante o avanço inicial, portanto essa captura ainda deixa em aberto a última gravação anterior à espera. As capturas com rastreio atômico têm custo adicional e não servem como benchmark de FPS.
 
+## Despacho SPU sem identidade comprovada
+
+O patch `0010-remove-unverified-job-image-fallback.patch` remove a tentativa de executar a imagem 1 em qualquer endereço não resolvido do policy module 2. O número da imagem depende do registro de cada port; neste port, a imagem 1 é uma tarefa diferente. Ter bytes não nulos no Local Store não identifica essa tarefa.
+
+O rastreio da escrita encontrou uma rotina da imagem errada em LS `0x04858`, com retorno `0x06CD4`, sobrescrevendo o vetor em LS zero com `0x30303030`. A captura consistente do trabalhador mostrou que esse valor era decodificado como um salto para `0x18180`, no meio de código de outro módulo. O interpretador repetiu esse caminho milhões de vezes. A inspeção do código realmente carregado em `0x04858` mostrou uma instrução diferente da rotina recompilada que havia feito a escrita.
+
+A correção mantém os resolvedores de imagem residente e os destinos recompilados válidos. Um destino sem identidade resolvida segue pelo caminho existente que executa os bytes presentes no Local Store. O vetor não é restaurado artificialmente, e nenhum sinal de conclusão de job é fabricado.
+
+O teste `tools/test_spu_policy_image_collision.py` usa somente instruções sintéticas e o runtime real. O controle anterior falha por executar a imagem errada nos casos sem proprietário, com região registrada sem função e com bytes rejeitados. O proprietário válido continua funcionando. Com o patch, os quatro casos passam com cache desligado, ligado e em modo `shadow`: 12 verificações, incluindo o resultado dos registradores e a preservação do vetor. O patch também foi aplicado a uma cópia limpa da base com os patches anteriores, testado nessa cópia e compilado tanto no runtime isolado quanto no executável completo.
+
+Exemplo no PowerShell, com GCC MinGW instalado:
+
+```powershell
+py tools/test_spu_policy_image_collision.py --sdk ../ps3recomp --cc C:/msys64/ucrt64/bin/gcc.exe --output-dir out/test-policy-image-collision
+```
+
+A nova captura D3D12 contém 14 lotes: dois de geometria com 350 draws, cinco com 574 draws e sete de composição. A geometria texturizada permanece nos render targets intermediários; o backbuffer ainda alterna quadros pretos e composição verde/amarela. Essa validação não confirma a correção das cores ou da profundidade.
+
+A comparação sem readbacks, em 1280×720 e com `PS3_VERBOSE=0`, não mostrou ganho sustentado de velocidade: a cadência mediana dos lotes com 574 draws foi aproximadamente 0,477/s antes e 0,475/s depois. A GPU levou cerca de 73,9 e 75,0 ms nesses lotes, e 23,2 e 23,1 ms na composição. A espera explícita por GPU ficou perto de 0,02–0,03 ms; o intervalo antes da composição permaneceu perto de dois segundos. As amostras são de uma execução por versão e não demonstram diferença significativa de desempenho. As metas de 30/60 FPS continuam pendentes.
+
+Depois da correção, os logs também registram tentativas repetidas de despachar um job ainda não registrado, de 1.936 bytes e fingerprint `939A8ABE78393C5E`. Ele permanece um ponto de investigação; registrar um fingerprint sem recompilar e validar o conteúdo correspondente não é uma solução.
+
 ## Aplicar as correções do runtime
 
 Os patches usam o commit [`de4f090` do ps3recomp](https://github.com/sp00nznet/ps3recomp/tree/de4f090328ea08bef6b2f15caec0b85e343a7ece) como base. A partir da raiz deste repositório, com uma cópia limpa do ps3recomp nesse commit em `../ps3recomp`, execute no PowerShell.
@@ -146,3 +168,5 @@ foreach ($patch in $patches) {
 O script `tools/prepare_spurs_jobs.py` aceita as capturas dos jobs adicionais com `--boot-dumps` e `--later-dumps`, depois de `prepare_spu_elf.py`. Ele valida tamanho e fingerprint antes de registrar a função recompilada. Use `--help` para as opções. Os patches cobrem sincronização, apresentação do splash e captura para diagnóstico. A execução local usa outras preparações do port e imagens PPU/SPU geradas a partir da cópia local do jogo.
 
 Na comparação com o RPCS3, a thread é adicionada à fila de `lwcond` antes de liberar o mutex associado. Essa sequência é o comportamento usado como referência no patch do runtime. [Implementação de `sys_lwcond` no RPCS3](https://github.com/RPCS3/rpcs3/blob/master/rpcs3/Emu/Cell/lv2/sys_lwcond.cpp)
+
+
