@@ -78,3 +78,31 @@ Exemplo, se essas pastas existirem localmente:
 Projeto A: GPL-3.0 com componentes de diversas licenças; C: GPL-2.0; B: MIT declarado em LICENSE. **Não copiar implementações GPL A/C para nosso runtime sem revisão e cumprimento de obrigações**. A ferramenta SPU desta branch é implementação original de uma verificação genérica, sem incorporar fonte A/C. Não enviar EBOOT, PKG, assets, firmware, logs com código ou dados guest, dumps SPU ou gerados de recomp para GitHub. Usar pastas privadas ignoradas pelo Git.
 
 **Resultado desta branch:** documentação auditável + testes sintéticos; nenhum ganho de FPS ou fix de render foi alegado.
+
+## Aprofundamento: execução de SPU, reaproveitamento seguro e desempenho
+
+A segunda inspeção examinou implementações em vez de apenas arquitetura e README:
+
+1. **A: [patch_spu_contention.py](https://github.com/ChaosTheory1075/infamous-ps5/blob/8e07d8ff373b19e37a9b6d45f6b437f48833754b/tools/patch_spu_contention.py)** mostra contenção causada por um contador global de PUTLLC, marcação de linhas de reserva e geração de wake-up. É candidato **P1 de benchmark A/B**, não um ajuste automático: mudanças em ordenação atômica devem respeitar o modelo SPU/PPU. [DONTFLIP.md](https://github.com/ChaosTheory1075/infamous-ps5/blob/8e07d8ff373b19e37a9b6d45f6b437f48833754b/DONTFLIP.md) registra regressões reais ao enfraquecer fences/coerência.
+2. **A: [patch_spu_pollwake.py](https://github.com/ChaosTheory1075/infamous-ps5/blob/8e07d8ff373b19e37a9b6d45f6b437f48833754b/tools/patch_spu_pollwake.py)** distingue SPU acordada por produtor de SPU que detectou mudança só no re-poll. Abordagem apropriada para a investigação do job geral: instrumentar a linha guest específica do contador e confirmar se o produtor emite evento LR. Não adicionar polling global sem prova.
+3. **A: [patch_spin_waits.py](https://github.com/ChaosTheory1075/infamous-ps5/blob/8e07d8ff373b19e37a9b6d45f6b437f48833754b/tools/patch_spin_waits.py)** implementa espera curta configurável antes de bloquear em condição. Só testar depois de medir a frequência e o tipo de wake; um spin excessivo pode consumir núcleos SPU e piorar a latência.
+4. **B: [lift_relocmods.py](https://github.com/erikomis/infamous2-recomp/blob/61ad6ffd826dc6d1f32bf78ccbaa4ab98352f980/infamous2-lle/tools/lift_relocmods.py)** documenta cerca de 30 overlays SPU position-independent carregados em diferentes LS; a ausência de tradução relocável provocou queda para 11–14 FPS no inFAMOUS 2 do autor. **Isso não prova que FoB tem os mesmos overlays**, mas justifica buscá-los no EBOOT local antes de atribuir toda lentidão ao D3D12.
+5. **B: [relift_jobmod.py](https://github.com/erikomis/infamous2-recomp/blob/61ad6ffd826dc6d1f32bf78ccbaa4ab98352f980/infamous2-lle/tools/relift_jobmod.py)** aceita --extra para pontos de entrada adicionais detectados em retornos para código não traduzido. **A: [fob_jobextra.py](https://github.com/ChaosTheory1075/infamous-ps5/blob/8e07d8ff373b19e37a9b6d45f6b437f48833754b/tools/fob_jobextra.py)** localiza janelas exatas entre dois jobmods, mas requer checar base da LS e offsets relativos. A ferramenta nova abaixo aplica esse critério, rejeitando janelas ambíguas.
+6. **C: [VKNativeLighting.cpp](https://github.com/ttmx/rpcs3-infamous2/blob/22c57ff052c142667f7856ea44e123ab58776237/rpcs3/Emu/RSX/VK/VKNativeLighting.cpp)** e [VKNativeSSAO.cpp](https://github.com/ttmx/rpcs3-infamous2/blob/22c57ff052c142667f7856ea44e123ab58776237/rpcs3/Emu/RSX/VK/VKNativeSSAO.cpp) documentam substituição da computação SPU por passes GPU com fallback, remoção de readbacks redundantes e limites de semântica. **Não portar agora**: enquanto nossa saída tem cores verdes/laranjas, substituir iluminação poderia encobrir a divergência primária.
+
+### Novo diagnóstico local, sem mexer no runtime
+
+O utilitário [tools/inspect_spu_overlays.py](../tools/inspect_spu_overlays.py), de implementação original, oferece dois subcomandos **somente leitura**:
+
+```bat
+py tools/inspect_spu_overlays.py scan "private\game\EBOOT.elf" --json "out\spu-overlay-candidates.json"
+py tools/inspect_spu_overlays.py entries "out\if2-jobmods\exemplo.bin" "out\fob-jobmods\exemplo.bin" --offsets 0x30,0x40 --json "out\spu-extra-entry-candidates.json"
+```
+
+O primeiro busca assinatura potencial de overlay; **não considera o match uma função comprovada** e não assume a conversão file offset → guest EA sem validar o PT_LOAD. O segundo localiza janelas de instruções byte-idênticas e únicas para orientar relift; **não traduz**, não altera o jogo e não atribui automaticamente base LS. Arquivos de exemplo e caminhos precisam existir; o segundo comando é ilustrativo. Só publique a *ferramenta e testes sintéticos*, nunca os insumos proprietários ou relatórios com dados de memória.
+
+### Portão antes de otimizar o jogo
+
+1. Em dois boots limpos, obter o último evento que mudou o mínimo dos sete campos para o objeto geral e identificar qual lane ficou atrás.
+2. Relacionar a lane atrasada com job, worker, local store, PUTLLC e wake-up. Determinar se o progresso cai no interpretador por overlay não registrado ou se existe erro de coerência/sinalização.
+3. Corrigir apenas divergência comprovada; comparar FPS real e integridade de quadros com as mesmas configurações. Não forçar o contador, pular trabalho SPU nem maquiar o FPS.
