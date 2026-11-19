@@ -19,5 +19,33 @@ jobs:
           python-version: '3.12'
       - name: Sintaxe Python
         run: python -m compileall -q tools tests
-      - name: Testes sintéticos (sem arquivos do jogo)
+      - name: Testes sintÃ©ticos (sem arquivos do jogo)
         run: python -m unittest discover -s tests -v
+
+  spu-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Checkout da base fixa do runtime
+        uses: actions/checkout@v4
+        with:
+          repository: sp00nznet/ps3recomp
+          ref: de4f090328ea08bef6b2f15caec0b85e343a7ece
+          path: out/ci-sdk
+          persist-credentials: false
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Aplicar a sÃ©rie pÃºblica de patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          for patch in patches/ps3recomp/*.patch; do
+            git -C out/ci-sdk apply --check "$GITHUB_WORKSPACE/$patch"
+            git -C out/ci-sdk apply "$GITHUB_WORKSPACE/$patch"
+          done
+      - name: RegressÃ£o SPU com instruÃ§Ãµes sintÃ©ticas
+        run: python tools/test_spu_policy_image_collision.py --sdk out/ci-sdk --cc gcc --output-dir out/ci-spu
+

@@ -65,6 +65,110 @@ No rastreio do `SP Movie Player` com base em `0x00AC5430`, a abertura inicial fe
 
 Para repetir o rastreio de I/O no build local, habilite `FS_CALLER=1` e `PS3_FSLOG_READS=8` e acompanhe as leituras entre a abertura de `fob_logo.bik` e o fechamento ou fim da captura. Use o descritor retornado em `open` se a execução escolher outro número. Para repetir a observação do objeto, use `PPU_WWATCH=00AC5470`, `PPU_WWATCH_LEN=0x20` e `PPU_WWATCH_MAX=400`. O endereço se refere à instância capturada nessa edição.
 
+## Superfícies intermediárias do Direct3D 12
+
+A captura `RSX_CAP=926:15:3` mostrou a transição de lotes com duas operações para lotes com centenas. No quadro 959, com 350 operações, o backbuffer estava preto enquanto os alvos `0x00AB8000` e `0x00E3C000` continham pixels. O quadro 962 apresentou um artefato claro. A captura com `SCREEN_AS_TEX=0` também apresentou preto no primeiro lote de 350 operações.
+
+O quarto patch impede que a cópia da tela substitua uma textura se o cache de render targets já possui uma superfície no mesmo endereço e com as mesmas dimensões. O teste de seleção confirmou a prioridade do alvo correspondente, a cópia de tela para os casos anteriores sem correspondência e o upload de B8. Como referência, o RPCS3 usa o endereço, as dimensões e o pitch do buffer de exibição ao procurar a superfície do flip. [Apresentação Vulkan no RPCS3](https://github.com/RPCS3/rpcs3/blob/master/rpcs3/Emu/RSX/VK/VKPresent.cpp)
+
+O build com o patch voltou a renderizar alvos intermediários após abrir `fob_logo.bik`. Os últimos backbuffers capturados continuaram pretos. O manifesto também mostrou o offset `0x011C0000` com um alvo de 256×256 e usos como textura de 1280×720 no mesmo quadro.
+
+Um rastreio na preparação do lote confirmou dois alvos de cor no mesmo offset. No quadro 964, a operação 8 pediu 1280×720 e a operação 50 pediu 256×256. Ambas usaram o formato de superfície `0x148`. Com a chave anterior, a passagem de preparação substituía o recurso de 1280×720 antes de enviar os primeiros draws à GPU.
+
+O quinto patch conserva recursos por offset, dimensões e formato. Cada draw seleciona o alvo com as suas dimensões, e a leitura de textura prioriza as dimensões do sampler. A captura do quadro 965 no build atualizado registrou os dois alvos simultaneamente e gerou dois arquivos de leitura. Os backbuffers tardios continuaram pretos. O patch corrige a seleção das superfícies. A propagação de dados entre regiões sobrepostas e a composição final ainda precisam de verificação. [Resolução de regiões de textura no RPCS3](https://github.com/RPCS3/rpcs3/blob/master/rpcs3/Emu/RSX/Common/texture_cache.h)
+
+## Constantes do fragment shader e a primeira cena 3D
+
+O cache de pipelines do Direct3D 12 identificava o fragment shader pelas instruções, mas o decompilava com constantes literais. Quando o jogo alterava a opacidade do fade no mesmo programa, o pipeline podia continuar usando a opacidade antiga e cobrir a cena.
+
+O sexto patch usa o decompilador com constantes em buffer. Cada draw fornece seus próprios valores em `b1`, e o pipeline permanece reutilizável quando só os valores mudam. `FP_CONSTBUF=0` mantém o caminho com constantes literais e usa o conteúdo completo do programa na chave do cache.
+
+Um teste com microcódigo sintético alterou a opacidade de 1,0 para 0,25, verificou a atualização do buffer e compilou o mesmo HLSL como `ps_5_0`. No boot local de `NPUA80657` com a configuração padrão do runtime e os draws originais, a captura após abrir `fob_logo.bik` mostrou um corredor 3D. Ainda houve quadros pretos intercalados e cores verdes e laranjas incorretas. O menu ainda precisa ser confirmado.
+
+## Seleção de cor nos passes de pós-processamento
+
+Na cena 3D, o alvo de cor `0x00AB8000` de 1280×720 já continha a geometria do corredor antes da composição. O backbuffer apresentava falsos tons verdes e laranjas e quadros pretos. O estado RSX capturado registra formato de superfície `0x148` e texturas lineares de cor `0xA5` com remapeamento `0xAAE4`. O D3D12 representa esses alvos de cor com `R8G8B8A8_UNORM`. A exportação do depth D24S8 também pode ser exposta como RGBA8 para reproduzir a leitura dos bytes de profundidade e stencil pelo jogo.
+
+O fragment shader do passe de redução amostra `t0`. O preparo do lote tratava os offsets de zeta inativos dos passes de cor como produtores de depth. Com isso, o sampler de `0x00AB8000` em 1280×180 recebia a exportação de depth de 1280×720, e o sampler seguinte de `0x00E3C000` em 320×180 também recebia a exportação errada. O sétimo patch só registra o offset de depth/stencil para draws com um desses testes ativo ou clears de depth/stencil.
+
+Antes da correção, os 14 binds observados nesses dois passes selecionaram depth. Depois, os 14 selecionaram cor, e as 2.157 leituras rastreadas da profundidade de cena em `0x00010000` continuaram no caminho de depth. Em um par de capturas de 80 operações, o alvo de geometria de 1280×720 e a exportação de depth tiveram BMPs idênticos byte a byte. A composição mudou, mas ainda apresenta cores incorretas e quadros pretos. O patch foi aplicado sobre a série anterior em uma cópia limpa do ps3recomp, e o runtime compilou nessa cópia.
+
+## Dimensões dos alvos pequenos da composição
+
+O RSX configura os alvos `0x00D06000` e `0x00D1A000` com clip de 20×11. Os shaders de filtragem leem essas superfícies no mesmo tamanho. O backend descartava dimensões menores que 16 e alocava ambos como 1280×720. O viewport continuava em 20×11, por isso a amostragem com coordenadas normalizadas cobria uma região diferente da escrita.
+
+O oitavo patch preserva o clip válido ao criar a superfície. Nos manifestos anteriores, os alvos apareciam em 1280×720 mesmo com draws e texturas de 20×11. Com o patch, os dois readbacks e os recursos usados pelos samplers têm 20×11. O runtime compilou em uma cópia limpa com a série de patches aplicada. A composição final ainda apresenta tons incorretos e quadros pretos.
+
+## Medição de CPU e GPU e reutilização de pipelines
+
+As execuções de desempenho usam 1280×720, a mesma cena inicial e `PS3_VERBOSE=0`, com readbacks, dumps de shaders e rastreios de superfícies desativados. Uma versão local de diagnóstico mede o tempo de CPU por lote e usa consultas de timestamp D3D12 para medir a execução da GPU. O tempo medido na GPU é convertido pela frequência da command queue. [Documentação de timestamps do D3D12](https://learn.microsoft.com/en-us/windows/win32/direct3d12/timing)
+
+Na RTX 4060, após aquecer os pipelines, o lote de 574 operações levou cerca de 70–74 ms na GPU e o lote de composição cerca de 23 ms. As pausas entre o lote pesado e a composição ficaram próximas de dois segundos. O tempo de espera inicial pelo fence teve mediana abaixo de 0,03 ms, com esperas isoladas de alguns milissegundos. O cache tinha aproximadamente 100–133 PSOs e 60–61 vertex shaders, abaixo das capacidades de 256 e 128. Os lotes aquecidos registraram zero misses de PSO. O contador anterior de FPS inclui lotes apresentados em fronteiras de clear. A cadência de lotes pesados foi de aproximadamente 0,44–0,48 por segundo nas repetições. Esses números ainda deixam 30 FPS pendentes.
+
+O nono patch guarda uma referência ao PSO preparado para cada draw e o reutiliza na gravação do comando. Antes, o backend repetia a resolução, o hash do fragment shader e a busca no cache nessa etapa. As referências são mantidas até a conclusão da GPU para suportar evicções do cache. Na comparação visual, os oito alvos de geometria coincidiram byte a byte, assim como sete dos oito backbuffers, incluindo o quadro de 80 operações com o corredor visível. O runtime compilou sobre a série de patches em uma cópia limpa. A alteração reduz a busca de PSO a uma por draw. As medições ainda não demonstram ganho sustentado de FPS.
+
+O log de alto volume também foi desativado em uma repetição e a pausa permaneceu. O rastreio identificou o semáforo 7 como pertencente à thread `Bink Snd`, e registrou polling SPU em uma linha de reserva. Isso localiza atividades durante a pausa, mas a causa da demora ainda precisa de confirmação. A composição mantém cores incorretas e quadros pretos.
+
+## Atribuição das amostras de CPU pelo mapa do executável
+
+O sampler interno reportou ausência de `.pdata` e atribuiu grande parte das amostras à função `0x00422ABC`, cujo corpo local retorna imediatamente. A consulta por intervalo e a busca de um chamador na pilha podem atribuir tempo em código de host a um endereço guest. Os percentuais dessa listagem exigem conferência com os endereços brutos.
+
+Um build com `/MAP:cpu-sampling.map` foi executado com `PS3_SAMPLE=10`, `PS3_SAMPLE_MAIN=1` e `PS3_SAMPLE_RVAS` apontando para um arquivo privado. O mapa foi gerado na mesma linkedição do executável amostrado. Durante a transição, vários blocos tiveram a maioria dos RIPs fora do executável. Mais tarde, os blocos finais mostraram polling de conclusão de jobs. No último bloco de 939 amostras, 223 ficaram fora do executável, 24,7% foram associados ao símbolo anterior `0x002B0B74`, 22,2% a `0x00580A40`, 15,5% a `0x003A9E68` e 13,1% a `0x006CE624`. A função `0x003A9E68` consulta o descritor e chama `0x00580A40` para verificar a conclusão.
+
+`tools/summarize_cpu_samples.py` recebe o arquivo de RVAs e o mapa correspondente. O relatório preserva as amostras externas e agrupa símbolos com o mesmo endereço. A associação por símbolo anterior no mapa é aproximada. Para executar, use `python tools/summarize_cpu_samples.py caminho/main-rvas.txt caminho/cpu-sampling.map`. Os mapas, endereços amostrados e código gerado do jogo permanecem locais.
+
+Essa medição identifica os locais de espera. A causa da demora dos jobs, a composição e a meta de 30 FPS continuam em investigação.
+
+## Contadores de conclusão dos jobs
+
+Um build local instrumentou a entrada de `0x00580A40` para registrar objeto, índice, alvo e os oito campos da linha consultada, com uma amostra por segundo. A rotina compara o mínimo dos sete campos u16 de `+2` a `+0xE` com o alvo. A descrição anterior da análise local, que falava em máximo entre campos, estava incorreta.
+
+No primeiro boot observado, a thread principal em `0x003A9ECC` consultou o objeto `0x00B50C80`, índice 0, linha `0x00B50C40`, pedindo `0x01D6`. As amostras finais repetiram `01D4 01D4 FFFF 01D2 FFFF FFFF FFFF FFFF`. O mínimo é `0x01D2`, inferior ao alvo. Outro boot reproduziu a mesma diferença entre o alvo e o mínimo, com alvo `0x00E0` e mínimo `0x00DC`. Esses registros mostram uma espera persistente depois dos primeiros quadros 3D.
+
+Os objetos da thread `SPU Light Task Kicker` em `0x00B51E80` registraram consultas com valor mínimo `0x001F` e alvos inferiores. A espera persistente capturada pertence ao objeto de jobs gerais. Os campos ainda exigem associação ao job e ao trabalhador responsáveis.
+
+Um terceiro boot habilitou `SPU_ATOM_EA=00B50C00`, `SPU_ATOM_FULL=2` e um limite de 8.000 registros. O policy module de imagem 2 acessou essa linha pelo helper em LS `0x0239C`, com retornos `0x02C68` e `0x02FE8`. O rastreio também mostrou commits PUTLLC bem-sucedidos. O limite foi atingido durante o avanço inicial, portanto essa captura ainda deixa em aberto a última gravação anterior à espera. As capturas com rastreio atômico têm custo adicional e não servem como benchmark de FPS.
+
+## Despacho SPU sem identidade comprovada
+
+O patch `0010-remove-unverified-job-image-fallback.patch` remove a tentativa de executar a imagem 1 em qualquer endereço não resolvido do policy module 2. O número da imagem depende do registro de cada port; neste port, a imagem 1 é uma tarefa diferente. Ter bytes não nulos no Local Store não identifica essa tarefa.
+
+O rastreio da escrita encontrou uma rotina da imagem errada em LS `0x04858`, com retorno `0x06CD4`, sobrescrevendo o vetor em LS zero com `0x30303030`. A captura consistente do trabalhador mostrou que esse valor era decodificado como um salto para `0x18180`, no meio de código de outro módulo. O interpretador repetiu esse caminho milhões de vezes. A inspeção do código realmente carregado em `0x04858` mostrou uma instrução diferente da rotina recompilada que havia feito a escrita.
+
+A correção mantém os resolvedores de imagem residente e os destinos recompilados válidos. Um destino sem identidade resolvida segue pelo caminho existente que executa os bytes presentes no Local Store. O vetor não é restaurado artificialmente, e nenhum sinal de conclusão de job é fabricado.
+
+O teste `tools/test_spu_policy_image_collision.py` usa somente instruções sintéticas e o runtime real. O controle anterior falha por executar a imagem errada nos casos sem proprietário, com região registrada sem função e com bytes rejeitados. O proprietário válido continua funcionando. Com o patch, os quatro casos passam com cache desligado, ligado e em modo `shadow`: 12 verificações, incluindo o resultado dos registradores e a preservação do vetor. O patch também foi aplicado a uma cópia limpa da base com os patches anteriores, testado nessa cópia e compilado tanto no runtime isolado quanto no executável completo.
+
+Exemplo no PowerShell, com GCC MinGW instalado:
+
+```powershell
+py tools/test_spu_policy_image_collision.py --sdk ../ps3recomp --cc C:/msys64/ucrt64/bin/gcc.exe --output-dir out/test-policy-image-collision
+```
+
+A nova captura D3D12 contém 14 lotes: dois de geometria com 350 draws, cinco com 574 draws e sete de composição. A geometria texturizada permanece nos render targets intermediários; o backbuffer ainda alterna quadros pretos e composição verde/amarela. Essa validação não confirma a correção das cores ou da profundidade.
+
+A comparação sem readbacks, em 1280×720 e com `PS3_VERBOSE=0`, não mostrou ganho sustentado de velocidade: a cadência mediana dos lotes com 574 draws foi aproximadamente 0,477/s antes e 0,475/s depois. A GPU levou cerca de 73,9 e 75,0 ms nesses lotes, e 23,2 e 23,1 ms na composição. A espera explícita por GPU ficou perto de 0,02–0,03 ms; o intervalo antes da composição permaneceu perto de dois segundos. As amostras são de uma execução por versão e não demonstram diferença significativa de desempenho. As metas de 30/60 FPS continuam pendentes.
+
+Depois da correção do despacho, os logs identificaram um job adicional ainda não registrado. A preparação e a validação inicial dos jobs seguintes estão descritas abaixo.
+
+## Jobs adicionais da cena
+
+O preparador aceita agora `--scene-dumps`, além dos diretórios de boot e transição já existentes. Esse diretório deve conter as duas capturas reconhecidas pelo script. A geração verifica tamanho, fingerprint, entrada, instruções suportadas e destinos de salto antes de substituir os arquivos de saída. A execução completa do preparador gerou e registrou 11 jobs; a comparação dos nove jobs anteriores não encontrou alteração no código gerado.
+
+Os dois novos jobs foram recompilados e incluídos no executável local. O rastreio confirmou uma execução nativa do job de 1.936 bytes em aproximadamente 0,22 ms. Nessa execução de 120 segundos, as falhas repetidas de despacho não reapareceram. A execução nativa do outro job, de 6.032 bytes, ainda não foi observada nesta repetição. A validação completa dos resultados desses jobs contra o jogo original continua pendente.
+
+Exemplo, usando somente capturas locais:
+
+```powershell
+py tools/prepare_spurs_jobs.py --boot-dumps out/capturas-boot --later-dumps out/capturas-later --transition-dumps out/capturas-transition --scene-dumps out/capturas-scene
+```
+
+O executável foi recompilado a partir da saída do preparador. Uma etapa com poucos desenhos apresentou cerca de 31 apresentações/s e depois parou. Outra execução com captura registrou somente uma limpeza preta no backbuffer, sem continuar até os pontos de captura seguintes. Esse contador não representa 30 FPS sustentados na cena 3D nem uma próxima tela visualmente correta.
+
+Na repetição com timestamps, sem readbacks, os cinco lotes aquecidos com 574 draws tiveram mediana de cerca de 74,7 ms na GPU e 3,9 ms de gravação na CPU. A cadência mediana desses lotes foi aproximadamente 0,444/s, contra 0,477/s na medição anterior aos novos ajustes. Uma execução por versão, com progressão e esperas diferentes, não estabelece uma regressão nem um ganho de desempenho. A espera seguinte e a composição final continuam abertas.
+
+Somente o preparador, os testes, os patches e esta documentação são publicados. As capturas e os arquivos recompilados derivados do jogo permanecem locais.
+
 ## Aplicar as correções do runtime
 
 Os patches usam o commit [`de4f090` do ps3recomp](https://github.com/sp00nznet/ps3recomp/tree/de4f090328ea08bef6b2f15caec0b85e343a7ece) como base. A partir da raiz deste repositório, com uma cópia limpa do ps3recomp nesse commit em `../ps3recomp`, execute no PowerShell.
@@ -82,3 +186,5 @@ foreach ($patch in $patches) {
 O script `tools/prepare_spurs_jobs.py` aceita as capturas dos jobs adicionais com `--boot-dumps` e `--later-dumps`, depois de `prepare_spu_elf.py`. Ele valida tamanho e fingerprint antes de registrar a função recompilada. Use `--help` para as opções. Os patches cobrem sincronização, apresentação do splash e captura para diagnóstico. A execução local usa outras preparações do port e imagens PPU/SPU geradas a partir da cópia local do jogo.
 
 Na comparação com o RPCS3, a thread é adicionada à fila de `lwcond` antes de liberar o mutex associado. Essa sequência é o comportamento usado como referência no patch do runtime. [Implementação de `sys_lwcond` no RPCS3](https://github.com/RPCS3/rpcs3/blob/master/rpcs3/Emu/Cell/lv2/sys_lwcond.cpp)
+
+

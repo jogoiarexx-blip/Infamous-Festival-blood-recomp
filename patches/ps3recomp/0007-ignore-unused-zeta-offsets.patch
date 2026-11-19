@@ -1,0 +1,17 @@
+diff --git a/libs/video/rsx_d3d12_backend.c b/libs/video/rsx_d3d12_backend.c
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -4866,7 +4866,12 @@
+         for (int _m = 0; _m < 3; _m++)
+             if (dr->is_vp && dr->rt_mrt[_m])
+                 off_rt_get(dr->rt_mrt[_m], dr->rt_w, dr->rt_h, dr->rt_fmt);
+-        if (dr->is_vp && dr->zeta_off && (dr->rt_off || dr->no_color))
++        /* An unused zeta offset may point at the color target. Only track it
++         * when the operation uses depth or stencil, or a later texture bind
++         * can mistake a color surface for a depth export. */
++        const int uses_zeta = dr->is_clear ? (dr->clear_mask & 3u) != 0
++                                          : dr->zs_key != 0;
++        if (dr->is_vp && uses_zeta && dr->zeta_off && (dr->rt_off || dr->no_color))
+             off_ds_get(dr->zeta_off, dr->rt_w, dr->rt_h);
+         for (int _u = 0; _u < 16; _u++) dr->tex_ds[_u] = -1;   /* set below for draws */
+     }
