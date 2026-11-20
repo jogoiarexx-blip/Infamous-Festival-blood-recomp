@@ -49,3 +49,6 @@ jobs:
       - name: Regressão SPU com instruções sintéticas
         run: python tools/test_spu_policy_image_collision.py --sdk out/ci-sdk --cc gcc --output-dir out/ci-spu
 
+
+      - name: Ordenação de conclusão dos jobs (sem arquivos do jogo)
+        run: python tools/test_jobchain_event_ordering.py --sdk out/ci-sdk --cc gcc --output-dir out/ci-jobchain
