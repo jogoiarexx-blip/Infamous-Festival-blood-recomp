@@ -2,9 +2,10 @@ import hashlib
 from pathlib import Path
 import struct
 import sys
+import tempfile
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from prepare_data_modules import ModuleSpec, mapped_address, validate_module
+from prepare_data_modules import ModuleSpec, mapped_address, validate_module, resolve_elf_path
 
 
 class DataModuleValidationTests(unittest.TestCase):
@@ -25,6 +26,50 @@ class DataModuleValidationTests(unittest.TestCase):
                       ea=0x10100, image=300)
         values.update(changes)
         return ModuleSpec(**values)
+
+    def test_default_elf_finds_project_layout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            game = root / "private/game/EBOOT.elf"
+            game.parent.mkdir(parents=True)
+            game.write_bytes(b"local test fixture")
+            self.assertEqual(resolve_elf_path(root), game)
+
+    def test_default_elf_accepts_uppercase_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            game = root / "private/game/EBOOT.ELF"
+            game.parent.mkdir(parents=True)
+            game.write_bytes(b"local test fixture")
+            self.assertEqual(resolve_elf_path(root), game)
+
+    def test_default_elf_fallback_and_priority(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            legacy = root / "private/PS3_GAME/USRDIR/EBOOT.elf"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_bytes(b"legacy fixture")
+            self.assertEqual(resolve_elf_path(root), legacy)
+            preferred = root / "private/game/EBOOT.elf"
+            preferred.parent.mkdir(parents=True)
+            preferred.write_bytes(b"project fixture")
+            self.assertEqual(resolve_elf_path(root), preferred)
+
+    def test_explicit_elf_overrides_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            specified = root / "custom/EBOOT.elf"
+            specified.parent.mkdir(parents=True)
+            specified.write_bytes(b"private fixture")
+            self.assertEqual(resolve_elf_path(root, specified), specified)
+
+    def test_missing_elf_explains_remedy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaisesRegex(FileNotFoundError, "--elf"):
+                resolve_elf_path(root)
+            with self.assertRaises(FileNotFoundError):
+                resolve_elf_path(root, root / "missing.elf")
 
     def test_maps_file_offset_through_load_segment(self):
         elf = self.make_image()
