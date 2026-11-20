@@ -1,0 +1,58 @@
+From: Antigravity <antigravity@google.com>
+Subject: [PATCH 0012] video: support GCM_COMPOSITE_RT to present offscreen render targets
+
+inFAMOUS 2 and Festival of Blood render their 3D geometry into offscreen
+G-buffers (e.g. 0x00AB8000 for albedo, 0x011C0000 for lighting), while
+the swapchain presentation targets buffer offset 0 or flips display buffers
+at 0x3B0000 / 0x734000. Without compositing from the active offscreen render
+target, the presented backbuffer remained black.
+
+This patch enables `GCM_COMPOSITE_RT` environment variable support in
+`composite_present()`:
+- `GCM_COMPOSITE_RT=1`: Auto-selects the display buffer or fallback color targets.
+- `GCM_COMPOSITE_RT=2`: Last-drawn slot.
+- `GCM_COMPOSITE_RT=<offset>`: Explicit offscreen render target (e.g. 0x00AB8000).
+
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -4422,9 +4422,38 @@ static void composite_present(u32 fi)
+ {
+     u32 want = s_composite_src;
+     s_composite_src = 0;
++    if (!want) {
++        static int s_env_checked = 0;
++        static u32 s_env_comp = 0;
++        if (!s_env_checked) {
++            s_env_checked = 1;
++            const char* e = getenv("GCM_COMPOSITE_RT");
++            if (e) s_env_comp = (u32)strtoul(e, NULL, 0);
++        }
++        want = s_env_comp;
++    }
+     if (!want) return;
+     /* want == 2 means "whatever this frame's draws targeted" -- the one thing
+      * guaranteed to hold geometry, and immune to the offset collision above. */
+-    int i;
+-    if (want == 2u) { i = s_last_drawn_slot; want = s_last_drawn_off; }
++    int i = -1;
++    if (want == 2u) { i = s_last_drawn_slot; want = s_last_drawn_off; }
++    else if (want == 1u) {
++        /* Auto: check if there is an offscreen RT matching the current scanout buffer */
++        extern int cellGcm_current_scanout(u32*, u32*, u32*, u32*);
++        u32 sc_off = 0, sc_p = 0, sc_w = 0, sc_h = 0;
++        if (cellGcm_current_scanout(&sc_off, &sc_p, &sc_w, &sc_h) && sc_off) {
++            i = off_rt_find(sc_off);
++            if (i >= 0) want = sc_off;
++        }
++        if (i < 0) {
++            static const u32 fallback_targets[] = { 0x011C0000, 0x00AB8000, 0x00734000, 0x003B0000 };
++            for (size_t fbi = 0; fbi < sizeof(fallback_targets)/sizeof(fallback_targets[0]); fbi++) {
++                i = off_rt_find(fallback_targets[fbi]);
++                if (i >= 0 && s_d3d.off_rt[i].res && s_d3d.off_rt[i].w >= s_d3d.width && s_d3d.off_rt[i].h >= s_d3d.height) {
++                    want = fallback_targets[fbi];
++                    break;
++                }
++            }
++        }
++    }
+     else            { i = off_rt_find(want); }
