@@ -5,6 +5,13 @@ com entrada 0x6C30. Os registros usam IDs 300–304 e verificam os bytes execut�
 no carregamento. O script exige SHA-256, cabeçalho e mapeamento PT_LOAD exatos;
 qualquer divergência nesses dados é rejeitada. Todos os arquivos derivados ficam em `out/`.
 
+O preparador procura automaticamente o EBOOT local em `private/game/EBOOT.elf`
+(estrutura principal do repositório). Também aceita `EBOOT.ELF` e a
+estrutura alternativa `private/PS3_GAME/USRDIR/`. Se necessário, indique
+um caminho específico com `--elf "CAMINHO\\EBOOT.elf"`. Se não encontrar
+nenhum arquivo, a execução para com mensagem explicativa.
+O modo `--audit-only` apenas verifica os cinco módulos, sem gerar código.
+
 No terminal de compilação já configurado para este projeto:
 
 ```powershell
