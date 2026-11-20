@@ -108,15 +108,35 @@ def registration_source(modules: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def resolve_elf_path(root: Path, specified: Path | None = None) -> Path:
+    """Find the local decrypted EBOOT without downloading or copying it."""
+    if specified is not None:
+        if not specified.is_file():
+            raise FileNotFoundError(f"EBOOT not found: {specified}")
+        return specified
+    candidates = tuple(
+        root / folder / name
+        for folder in ("private/game", "private/PS3_GAME/USRDIR")
+        for name in ("EBOOT.elf", "EBOOT.ELF")
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(
+        "Decrypted EBOOT not found. Put your own EBOOT.elf under "
+        "'private/game/' or provide an explicit path with --elf."
+    )
+
+
 def main() -> None:
     root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--elf", type=Path, default=root / "private/PS3_GAME/USRDIR/EBOOT.elf")
+    parser.add_argument("--elf", type=Path, help="Local decrypted EBOOT.elf (default: auto-detect under private/)")
     parser.add_argument("--sdk", type=Path, default=root.parent / "ps3recomp")
     parser.add_argument("--port", type=Path, default=root / "out/port")
     parser.add_argument("--audit-only", action="store_true")
     args = parser.parse_args()
-    elf_data = args.elf.read_bytes()
+    elf_data = resolve_elf_path(root, args.elf).read_bytes()
     modules = [validate_module(elf_data, spec) for spec in MODULES]
     metadata = [{"name": m["name"], "guest_ea": hex(m["spec"].ea),
                  "sha256": m["spec"].sha256, "image": m["spec"].image,
