@@ -48,13 +48,17 @@ The nine checks passed against the local SDK and a separate public SDK checkout.
 The patch also applied independently to the public baseline and alongside the
 Gemini compositor/cache and GPU retirement patches.
 
-Private game runs used the same executable configuration apart from this fix:
-95-second limit, default presentation timing, six RSX captures, shader dumping,
-and no compositor override. All six pre-fix captured backbuffers were black.
-Three of six post-fix captured backbuffers contain the bar scene and characters.
+Private game runs used a 95-second limit, default presentation timing, six RSX
+captures and no compositor override. An initial pre-fix run without shader
+dumping captured six black backbuffers. However, a second pre-fix run WITH
+shader dumping already captured the bar scene in three of six backbuffers.
+The post-fix run with shader dumping also captured three nonblack backbuffers.
+Therefore scene visibility cannot be attributed to this patch from these runs;
+diagnostic timing and scene progression must be controlled more closely.
 Captured shader variants contained three unhandled-opcode comments before and
-none after. Scene progression differs, so these runs do not provide a matched
-FPS comparison or a pixel-equivalence proof.
+none after, but the captured variants and scene progression differ. The proven
+result is instruction/constant lifetime preservation, not a confirmed visual
+repair or FPS gain. These runs do not provide pixel-equivalence evidence.
 
 ## Remaining limits
 
