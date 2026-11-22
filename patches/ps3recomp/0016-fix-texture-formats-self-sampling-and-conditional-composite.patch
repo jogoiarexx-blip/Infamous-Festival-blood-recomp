@@ -1,0 +1,211 @@
+Subject: [PATCH 0016] video: snapshot render target feedback and gate diagnostic composition
+
+Requires 0012 and 0013. Rebased on 0011-0015.
+
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -423,7 +423,17 @@
+ static D3D12State s_d3d;
+ char g_rsx_title_base[128] = "ps3recomp";
+ static u32 s_dbg_last_draws = 0;
++static u32 s_dbg_last_offscreen_draws = 0;
++static u32 s_dbg_last_onscreen_draws = 0;
+ static u64 s_req_verts = 0, s_req_draws = 0, s_drop_draws = 0;
++
++#define FEEDBACK_SCRATCH_SLOTS 4
++typedef struct FeedbackScratch {
++    ID3D12Resource* res;
++    u32 w, h, dxgi;
++    int src_rt;
++} FeedbackScratch;
++static FeedbackScratch s_feedback_scratch[FEEDBACK_SCRATCH_SLOTS] = {0};
+ /* Raw bind offset of the duck's texture, identified by CONTENT (duck.tga is
+  * overwhelmingly yellow, avg 243,191,23). VRAM offsets move between runs, so a
+  * hard-coded offset in a filter silently matches nothing and the run looks like
+@@ -2909,6 +2919,17 @@
+     return h;
+ }
+ 
++static inline int is_supported_rsx_tex_format(u32 base_fmt)
++{
++    return (base_fmt >= 0x81 && base_fmt <= 0x88) ||
++           (base_fmt >= 0x8B && base_fmt <= 0x8D) ||
++           base_fmt == 0x90 || base_fmt == 0x92 ||
++           base_fmt == 0x94 || base_fmt == 0x95 ||
++           base_fmt == 0x97 ||
++           (base_fmt >= 0x9A && base_fmt <= 0x9E) ||
++           base_fmt == 0x9F;
++}
++
+ /* The DXGI format a guest texture is uploaded as -- the DECODED image's, which
+  * is not always the guest's: the packed 16-bit colour formats arrive unpacked
+  * to RGBA8, and DEPTH24_D8 as a float. rsx_texture_layout.h says which class
+@@ -4395,6 +4416,14 @@
+ 
+ static void composite_present(u32 fi)
+ {
++    /* If this frame recorded no offscreen draws, do not composite over the backbuffer.
++     * Cutscenes (e.g. Bink video) and 2D UI draws render directly to rt=0 (swapchain
++     * backbuffer) and must not be overwritten by stale or unrendered offscreen RTs. */
++    if (s_dbg_last_offscreen_draws == 0) {
++        s_composite_src = 0;
++        return;
++    }
++
+     u32 want = s_composite_src;
+     s_composite_src = 0;
+     if (!want) {
+@@ -4655,6 +4684,19 @@
+ 
+ static void render_frame(void)
+ {
++    /* Compute current batch draw composition upfront before any composite or present decisions.
++     * Cutscenes (e.g. Bink video) and 2D UI draws render directly to rt=0 (swapchain backbuffer). */
++    {
++        u32 cur_offscreen = 0, cur_onscreen = 0;
++        for (u32 _i = 0; _i < s_d3d.draw_count && _i < MAX_DRAWS; _i++) {
++            if (s_d3d.draws[_i].rt_off != 0) cur_offscreen++;
++            else cur_onscreen++;
++        }
++        s_dbg_last_offscreen_draws = cur_offscreen;
++        s_dbg_last_onscreen_draws = cur_onscreen;
++    }
++    s_last_drawn_slot = -1;
++    s_last_drawn_off  = 0;
+     double _rf0 = perf_on() ? perf_now() : 0.0;
+     u32 fi = s_d3d.frame_index;
+ 
+@@ -5142,10 +5184,7 @@
+                 u32 _bf = dr->tex[_u].fmt & 0x9F;
+                 /* The formats d3d12_bind_texture records. A half-float one
+                  * that is not a render target found above is guest data too. */
+-                if (dr->tex[_u].off &&
+-                    (_bf == 0x81 || _bf == 0x85 || _bf == 0x8B ||
+-                     (_bf >= 0x86 && _bf <= 0x88) || _bf == 0x9A ||
+-                     _bf == 0x94 || _bf == 0x95 || _bf == 0x9C || _bf == 0x9F)) {
++                if (dr->tex[_u].off && is_supported_rsx_tex_format(_bf)) {
+                     double _tt = perf_on() ? perf_now() : 0.0;
+                     int _cube = dr->tex[_u].cube && (dr_cube_mask(dr) & (1u << _u));
+                     int ts = vp_upload_tex_slot(dr->tex[_u].off, dr->tex[_u].w,
+@@ -5600,11 +5639,87 @@
+                 /* Per-draw textures: bind this draw's t0-t3 SRV window.
+                  * Any sampled offscreen RT transitions to PSR first (never
+                  * one of the currently-bound colour targets). */
++                for (int _k = 0; _k < FEEDBACK_SCRATCH_SLOTS; _k++)
++                    s_feedback_scratch[_k].src_rt = -1;
++
+                 for (int _u = 0; _u < 16; _u++) {
+                     int rt = dr->tex_rt[_u];
+-                    if (rt >= 0 && rt != cur_rt &&
+-                        rt != cur_m[0] && rt != cur_m[1] && rt != cur_m[2])
+-                        off_rt_transition(rt, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++                    if (rt >= 0) {
++                        if (rt != cur_rt && rt != cur_m[0] && rt != cur_m[1] && rt != cur_m[2]) {
++                            off_rt_transition(rt, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++                        } else if (s_d3d.off_rt[rt].res) {
++                            /* Self-sampling feedback hazard (refraction through transparent props/bottles/glasses):
++                             * In D3D12 a resource cannot be simultaneously bound as RTV and SRV. Snapshot the active
++                             * render target into a dedicated scratch resource so the shader samples the background scene
++                             * while the Output Merger writes the prop geometry. Separate scratch slots per MRT ensure
++                             * sampling multiple active targets (e.g. color + normals) in one draw never overwrites each other. */
++                            int slot = (rt == cur_rt) ? 0 : (rt == cur_m[0]) ? 1 : (rt == cur_m[1]) ? 2 : 3;
++                            FeedbackScratch* scr = &s_feedback_scratch[slot];
++                            OffRT* r = &s_d3d.off_rt[rt];
++
++                            if (scr->src_rt != rt) {
++                                if (!scr->res || scr->w != r->w || scr->h != r->h || scr->dxgi != r->dxgi) {
++                                    if (scr->res) {
++                                        /* Defer release through fence retirement queue (PR #11) */
++                                        defer_release(scr->res);
++                                        scr->res = NULL;
++                                    }
++                                    scr->w = r->w; scr->h = r->h; scr->dxgi = r->dxgi;
++                                    D3D12_HEAP_PROPERTIES hp = {0}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
++                                    D3D12_RESOURCE_DESC td = {0};
++                                    td.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++                                    td.Width = r->w; td.Height = r->h;
++                                    td.DepthOrArraySize = 1; td.MipLevels = 1;
++                                    td.Format = (DXGI_FORMAT)r->dxgi;
++                                    td.SampleDesc.Count = 1;
++                                    td.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
++                                    td.Flags = D3D12_RESOURCE_FLAG_NONE;
++                                    HRESULT hr = s_d3d.device->lpVtbl->CreateCommittedResource(
++                                        s_d3d.device, &hp, D3D12_HEAP_FLAG_NONE,
++                                        &td, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, NULL,
++                                        &IID_ID3D12Resource, (void**)&scr->res);
++                                    if (FAILED(hr)) {
++                                        static int w_alloc = 0;
++                                        if (PS3_LOG_FIRST(w_alloc, 4))
++                                            fprintf(stderr, "[FEEDBACK] failed to allocate scratch for RT 0x%08X (slot %d, %ux%u dxgi=%u): 0x%08lX\n",
++                                                    r->off, slot, r->w, r->h, r->dxgi, (long)hr);
++                                        scr->res = NULL;
++                                    }
++                                }
++                                if (scr->res) {
++                                    D3D12_RESOURCE_BARRIER fb[2] = {0};
++                                    fb[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++                                    fb[0].Transition.pResource = r->res;
++                                    fb[0].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
++                                    fb[0].Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_SOURCE;
++                                    fb[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
++
++                                    fb[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++                                    fb[1].Transition.pResource = scr->res;
++                                    fb[1].Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
++                                    fb[1].Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_DEST;
++                                    fb[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
++
++                                    s_d3d.cmd_list->lpVtbl->ResourceBarrier(s_d3d.cmd_list, 2, fb);
++                                    s_d3d.cmd_list->lpVtbl->CopyResource(s_d3d.cmd_list, scr->res, r->res);
++
++                                    fb[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
++                                    fb[0].Transition.StateAfter  = D3D12_RESOURCE_STATE_RENDER_TARGET;
++
++                                    fb[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
++                                    fb[1].Transition.StateAfter  = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
++
++                                    s_d3d.cmd_list->lpVtbl->ResourceBarrier(s_d3d.cmd_list, 2, fb);
++                                    scr->src_rt = rt;
++                                }
++                            }
++                            {
++                                u32 wslot = DRAW_SRV_BASE + d * DRAW_SRV_STRIDE + (u32)_u;
++                                srv_write(wslot, scr->src_rt == rt ? scr->res : NULL,
++                                          (DXGI_FORMAT)r->dxgi, D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING);
++                            }
++                        }
++                    }
+                 }
+                 D3D12_GPU_DESCRIPTOR_HANDLE gh = gh_base;
+                 gh.ptr += (u64)(DRAW_SRV_BASE + d * DRAW_SRV_STRIDE) * s_d3d.srv_inc;
+@@ -7876,16 +7991,7 @@
+     /* VP path: record the latest bound texture (any supported format) so draws
+      * can carry it per-draw. Location bits (format[1:0]): 1 = LOCAL, 2 = MAIN. */
+     extern u32 cellGcmResolveLocated(int local, u32 offset);
+-    if (unit < 16 &&
+-        (base_fmt == 0x81 /* B8 */ || base_fmt == 0x85 /* A8R8G8B8 */ ||
+-         base_fmt == 0x8B /* G8B8: LBP's font atlas */ ||
+-         (base_fmt >= 0x86 && base_fmt <= 0x88) /* DXT1/23/45 */ ||
+-         base_fmt == 0x9A /* W16Z16Y16X16 half-float: RTT intermediates */ ||
+-         /* One- and two-channel 16/32-bit formats rsx_texture_layout already
+-          * decodes: X16 (God of War: Ascension's 256x256 font atlas -- without
+-          * it every glyph drew as a solid quad), Y16_X16, X32_FLOAT and
+-          * Y16_X16_FLOAT (its post-process intermediates). */
+-         base_fmt == 0x94 || base_fmt == 0x95 || base_fmt == 0x9C || base_fmt == 0x9F)) {
++    if (unit < 16 && is_supported_rsx_tex_format(base_fmt)) {
+         /* TEX_RESOLVE_AUTO=1: resolve through the page tables (local-page map
+          * then IO table) instead of trusting the format's location bits. A
+          * texture the guest built in main memory but tagged local resolves to
+@@ -8126,6 +8232,12 @@
+     submitted_pso_count = 0;
+ 
+     /* Release D3D12 resources */
++    for (int _k = 0; _k < FEEDBACK_SCRATCH_SLOTS; _k++) {
++        if (s_feedback_scratch[_k].res) {
++            s_feedback_scratch[_k].res->lpVtbl->Release(s_feedback_scratch[_k].res);
++            s_feedback_scratch[_k].res = NULL;
++        }
++    }
+     if (s_d3d.vertex_buffer) {
+         s_d3d.vertex_buffer->lpVtbl->Unmap(s_d3d.vertex_buffer, 0, NULL);
+         s_d3d.vertex_buffer->lpVtbl->Release(s_d3d.vertex_buffer);
