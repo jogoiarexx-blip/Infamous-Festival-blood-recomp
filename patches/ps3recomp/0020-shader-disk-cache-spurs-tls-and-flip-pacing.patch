@@ -5,7 +5,6 @@ Subject: [PATCH 0020] video/spu: implement persistent shader cache, SPURS TLS lo
   in shader_cache/ (or RSX_SHADER_CACHE_DIR), eliminating runtime D3DCompile stutters on VP/FP PSO misses.
 - runtime/spu/spurs_job.c: Replace per-job 256KB calloc/free heap allocations with thread-local s_tls_ls,
   eliminating ~1,500 OS heap allocations/deallocations per second and removing Windows heap lock contention.
-- runtime/spu/spu_workload.c: Add pointer/size fast path on repeat dispatches to bypass redundant content hashing.
 - libs/video/cellGcmSys.c: Unblock guest frame pacing by calling ppu_gcm_pump() inside cellGcmSetWaitFlip()
   and cellGcmGetFlipStatus(), and signal s_gcm_kick_ev on FIFO ring recycle.
 
@@ -904,15 +903,6 @@ index 625d0c25..74ba1cbb 100644
          static int s_skipped_nontri = 0;
          if (s_skipped_nontri < 3) {
              printf("[D3D12] draw_arrays: skipping prim=%u (needs index conversion)\n",
-@@ -8308,7 +8460,7 @@ void rsx_d3d12_backend_present(void)
-         extern unsigned cellGcm_flip_request_count(void);
-         if (rsx_present_flip_already_rendered(
-                 s_clear_presents, s_last_clear_presented_flip,
--                cellGcm_flip_request_count(), s_d3d.draw_count))
-+                cellGcm_flip_request_count()))
-             return;
-     }
- 
 @@ -8391,7 +8543,7 @@ void rsx_d3d12_backend_present(void)
  #include <ps3emu/ps3types.h>   /* u32 (header includes above are inside the _WIN32 guard) */
  #include <stdio.h>
@@ -926,24 +916,6 @@ diff --git a/runtime/spu/spu_workload.c b/runtime/spu/spu_workload.c
 index b6fee4ae..c1adebf0 100644
 --- a/runtime/spu/spu_workload.c
 +++ b/runtime/spu/spu_workload.c
-@@ -286,6 +286,17 @@ static uint64_t spu_workload_fingerprint_cached(const uint8_t* image, size_t n)
- #define FP_LOCK()   pthread_mutex_lock(&s_fp_lock)
- #define FP_UNLOCK() pthread_mutex_unlock(&s_fp_lock)
- #endif
-+    /* Fast path: identical pointer and size already cached (very common for static/resident job binaries) */
-+    FP_LOCK();
-+    for (unsigned i = 0; i < SLOTS; ++i) {
-+        if (s_fp[i].image == image && s_fp[i].n == n) {
-+            const uint64_t fp = s_fp[i].fp;
-+            FP_UNLOCK();
-+            return fp;
-+        }
-+    }
-+    FP_UNLOCK();
-+
-     const uint64_t content = spu_workload_content_hash(image, n);
-     FP_LOCK();
-     for (unsigned i = 0; i < SLOTS; ++i)
 @@ -1210,8 +1221,30 @@ int spu_taskset_round_busy(uint32_t* taskset_ea, uint32_t* taskId)
      return busy;
  }
