@@ -46,6 +46,10 @@ jobs:
             git -C out/ci-sdk apply --check "$GITHUB_WORKSPACE/$patch"
             git -C out/ci-sdk apply "$GITHUB_WORKSPACE/$patch"
           done
+      - name: Ciclo de vida de recursos da GPU
+        run: python tools/test_gpu_resource_retirement.py --sdk out/ci-sdk --cc gcc --output-dir out/ci-gpu-resources
+      - name: Vida útil dos programas de fragmentos
+        run: python tools/test_fp_program_lifetime.py --sdk out/ci-sdk --cc gcc --output-dir out/ci-fp-lifetime
       - name: Regressão SPU com instruções sintéticas
         run: python tools/test_spu_policy_image_collision.py --sdk out/ci-sdk --cc gcc --output-dir out/ci-spu
 

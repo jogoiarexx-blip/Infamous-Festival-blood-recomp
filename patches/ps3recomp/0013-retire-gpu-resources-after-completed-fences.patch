@@ -1,0 +1,194 @@
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -1410,59 +1410,93 @@
+  * Frame sync helpers
+  * -----------------------------------------------------------------------*/
+ 
++static void gpu_fence_sync_failed(const char* operation, HRESULT reason)
++{
++    fprintf(stderr, "[D3D12] GPU synchronization failed (%s): 0x%08lX; stopping before reusing GPU resources\n",
++            operation, (long)reason);
++    fflush(stderr);
++    abort();
++}
++
++static void wait_for_fence_value(u64 target)
++{
++    for (int attempt = 0; attempt < 3; attempt++) {
++        u64 completed = s_d3d.fence->lpVtbl->GetCompletedValue(s_d3d.fence);
++        if (completed == ~(u64)0)
++            gpu_fence_sync_failed("removed fence", s_d3d.device->lpVtbl->GetDeviceRemovedReason(s_d3d.device));
++        if (completed >= target) return;
++        HRESULT hr = s_d3d.fence->lpVtbl->SetEventOnCompletion(s_d3d.fence, target, s_d3d.fence_event);
++        if (FAILED(hr)) gpu_fence_sync_failed("SetEventOnCompletion", hr);
++        DWORD result = WaitForSingleObject(s_d3d.fence_event, 2000);
++        completed = s_d3d.fence->lpVtbl->GetCompletedValue(s_d3d.fence);
++        if (completed != ~(u64)0 && completed >= target) return;
++        hr = s_d3d.device->lpVtbl->GetDeviceRemovedReason(s_d3d.device);
++        if (completed == ~(u64)0 || FAILED(hr)) gpu_fence_sync_failed("device removed", hr);
++        if (result != WAIT_TIMEOUT && result != WAIT_OBJECT_0)
++            gpu_fence_sync_failed("fence event wait", (HRESULT)0x80004005u);
++        fprintf(stderr, "[D3D12] fence incomplete after %ds: want %llu got %llu\n",
++                2 * (attempt + 1), (unsigned long long)target, (unsigned long long)completed);
++    }
++    gpu_fence_sync_failed("fence timeout", (HRESULT)0x800705B4u);
++}
++
+ static void wait_for_gpu(void)
+ {
+     u32 fi = s_d3d.frame_index;
+-    s_d3d.fence_values[fi]++;
+-    s_d3d.cmd_queue->lpVtbl->Signal(s_d3d.cmd_queue, s_d3d.fence, s_d3d.fence_values[fi]);
+-
+-    if (s_d3d.fence->lpVtbl->GetCompletedValue(s_d3d.fence) < s_d3d.fence_values[fi]) {
+-        s_d3d.fence->lpVtbl->SetEventOnCompletion(
+-            s_d3d.fence, s_d3d.fence_values[fi], s_d3d.fence_event);
+-        /* NEVER wait unbounded here: this runs on the vblank ticker, which also
+-         * drives the guest's vblank handlers, the FIFO drain, and the fence
+-         * publication. A device removal (TDR) leaves the D3D12 fence unsignaled
+-         * forever and an INFINITE wait silently froze the ENTIRE emulation --
+-         * observed on LBP as a boot that died the moment the 2048x2048
+-         * offscreen RT was created (last log line), every guest thread parked.
+-         * Degrade loudly instead: bounded waits + the removal reason, then
+-         * carry on (subsequent D3D calls fail visibly but the game keeps
+-         * running headless). */
+-        for (int tries = 0; tries < 3; tries++) {
+-            if (WaitForSingleObject(s_d3d.fence_event, 2000) != WAIT_TIMEOUT)
+-                return;
+-            HRESULT rr = s_d3d.device->lpVtbl->GetDeviceRemovedReason(s_d3d.device);
+-            printf("[D3D12] wait_for_gpu STUCK %ds: want %llu got %llu removed=0x%08lX\n",
+-                   2 * (tries + 1),
+-                   (unsigned long long)s_d3d.fence_values[fi],
+-                   (unsigned long long)s_d3d.fence->lpVtbl->GetCompletedValue(s_d3d.fence),
+-                   (long)rr);
+-            fflush(stdout);
+-            if (rr != 0 /* S_OK: device still alive, keep waiting a bit */)
+-                break;
+-        }
+-    }
+-}
++    u64 target = ++s_d3d.fence_values[fi];
++    HRESULT hr = s_d3d.cmd_queue->lpVtbl->Signal(s_d3d.cmd_queue, s_d3d.fence, target);
++    if (FAILED(hr)) gpu_fence_sync_failed("queue Signal", hr);
++    wait_for_fence_value(target);
++}
++
++#define GRAVE_INITIAL 512
++static struct {
++    ID3D12Resource** items;
++    size_t count, capacity;
++} s_grave[FRAME_COUNT];
++static void defer_release(ID3D12Resource* r)
++{
++    if (!r) return;
++    const u32 fi = s_d3d.frame_index % FRAME_COUNT;
++    if (s_grave[fi].count == s_grave[fi].capacity) {
++        size_t capacity = s_grave[fi].capacity ? s_grave[fi].capacity * 2 : GRAVE_INITIAL;
++        if (capacity < s_grave[fi].capacity || capacity > (size_t)-1 / sizeof(ID3D12Resource*))
++            gpu_fence_sync_failed("retirement capacity overflow", (HRESULT)0x8007000Eu);
++        ID3D12Resource** grown = (ID3D12Resource**)realloc(s_grave[fi].items, capacity * sizeof(*grown));
++        if (!grown) gpu_fence_sync_failed("retirement allocation", (HRESULT)0x8007000Eu);
++        s_grave[fi].items = grown;
++        s_grave[fi].capacity = capacity;
++    }
++    s_grave[fi].items[s_grave[fi].count++] = r;
++}
++static void grave_flush(u32 fi)
++{
++    fi %= FRAME_COUNT;
++    for (size_t i = 0; i < s_grave[fi].count; i++)
++        s_grave[fi].items[i]->lpVtbl->Release(s_grave[fi].items[i]);
++    s_grave[fi].count = 0;
++}
++static void retirement_shutdown(void)
++{
++    wait_for_gpu();
++    for (u32 fi = 0; fi < FRAME_COUNT; fi++) {
++        grave_flush(fi);
++        free(s_grave[fi].items);
++        s_grave[fi].items = NULL;
++        s_grave[fi].capacity = 0;
++    }
++}
++
++
+ 
+ static void move_to_next_frame(void)
+ {
+     u64 current_fence = s_d3d.fence_values[s_d3d.frame_index];
+-    s_d3d.cmd_queue->lpVtbl->Signal(s_d3d.cmd_queue, s_d3d.fence, current_fence);
+-
++    HRESULT hr = s_d3d.cmd_queue->lpVtbl->Signal(s_d3d.cmd_queue, s_d3d.fence, current_fence);
++    if (FAILED(hr)) gpu_fence_sync_failed("frame Signal", hr);
+     s_d3d.frame_index = s_d3d.swap_chain->lpVtbl->GetCurrentBackBufferIndex(s_d3d.swap_chain);
+-
+-    if (s_d3d.fence->lpVtbl->GetCompletedValue(s_d3d.fence) < s_d3d.fence_values[s_d3d.frame_index]) {
+-        s_d3d.fence->lpVtbl->SetEventOnCompletion(
+-            s_d3d.fence, s_d3d.fence_values[s_d3d.frame_index], s_d3d.fence_event);
+-        if (WaitForSingleObject(s_d3d.fence_event, 2000) == WAIT_TIMEOUT) {
+-            HRESULT rr = s_d3d.device->lpVtbl->GetDeviceRemovedReason(s_d3d.device);
+-            printf("[D3D12] FENCE STUCK 2s: want %llu got %llu removed=0x%08lX\n",
+-                   (unsigned long long)s_d3d.fence_values[s_d3d.frame_index],
+-                   (unsigned long long)s_d3d.fence->lpVtbl->GetCompletedValue(s_d3d.fence),
+-                   (long)rr);
+-        }
+-    }
+-
++    wait_for_fence_value(s_d3d.fence_values[s_d3d.frame_index]);
++    grave_flush(s_d3d.frame_index);
+     s_d3d.fence_values[s_d3d.frame_index] = current_fence + 1;
+ }
+ 
+@@ -3082,8 +3116,8 @@
+      * cube path copies 6 subresources and writes a 6x upload buffer -- which
+      * crashes. */
+     if (t->res && (t->w != w || t->h != h || t->fmt != fmt || t->cube != cube || t->pitch != pitch_arg)) {
+-        t->res->lpVtbl->Release(t->res); t->res = NULL;
+-        if (t->up) { t->up->lpVtbl->Release(t->up); t->up = NULL; }
++        defer_release(t->res); t->res = NULL;
++        if (t->up) { defer_release(t->up); t->up = NULL; }
+     }
+     if (!t->res) {
+         D3D12_HEAP_PROPERTIES hp = {0}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+@@ -3823,10 +3857,10 @@
+             if (!s_d3d.off_rt[i].used) { slot = i; break; }
+         if (slot < 0) return -1;
+         wait_for_gpu();   /* unused in this batch, but submitted work may reference it */
+-        s_d3d.off_rt[slot].res->lpVtbl->Release(s_d3d.off_rt[slot].res);
++        defer_release(s_d3d.off_rt[slot].res);
+         s_d3d.off_rt[slot].res = NULL;
+         if (s_d3d.off_rt[slot].up) {
+-            s_d3d.off_rt[slot].up->lpVtbl->Release(s_d3d.off_rt[slot].up);
++            defer_release(s_d3d.off_rt[slot].up);
+             s_d3d.off_rt[slot].up = NULL;
+         }
+     }
+@@ -4059,7 +4093,7 @@
+     if (s_d3d.off_ds[i].res) {
+         /* An earlier frame may still reference it (see off_rt_get). */
+         wait_for_gpu();
+-        s_d3d.off_ds[i].res->lpVtbl->Release(s_d3d.off_ds[i].res);
++        defer_release(s_d3d.off_ds[i].res);
+         s_d3d.off_ds[i].res = NULL;
+     }
+     if (!s_d3d.ds_heap) {
+@@ -4638,8 +4672,8 @@
+         u32 w = s_d3d.tex_w, h = s_d3d.tex_h;
+         u32 pitch = (w + 255) & ~255u;   /* D3D12 requires 256-byte row pitch */
+ 
+-        if (s_d3d.tex_resource) { s_d3d.tex_resource->lpVtbl->Release(s_d3d.tex_resource); s_d3d.tex_resource = NULL; }
+-        if (s_d3d.tex_upload)   { s_d3d.tex_upload->lpVtbl->Release(s_d3d.tex_upload);     s_d3d.tex_upload = NULL; }
++        if (s_d3d.tex_resource) { defer_release(s_d3d.tex_resource); s_d3d.tex_resource = NULL; }
++        if (s_d3d.tex_upload)   { defer_release(s_d3d.tex_upload);     s_d3d.tex_upload = NULL; }
+ 
+         D3D12_HEAP_PROPERTIES hp_def = {0}; hp_def.Type = D3D12_HEAP_TYPE_DEFAULT;
+         D3D12_RESOURCE_DESC td = {0};
+@@ -8034,7 +8068,7 @@
+ {
+     if (!s_d3d.initialized) return;
+ 
+-    wait_for_gpu();
++    retirement_shutdown();
+     for (u32 i = 0; i < submitted_pso_count; i++)
+         submitted_psos[i]->lpVtbl->Release(submitted_psos[i]);
+     submitted_pso_count = 0;

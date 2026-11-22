@@ -1,0 +1,15 @@
+Subject: [PATCH 0017] spu: expand the content-validated fingerprint cache
+
+Keep hashing the current bytes on every lookup. A reused address and size do not identify an SPU image.
+
+--- a/runtime/spu/spu_workload.c
++++ b/runtime/spu/spu_workload.c
+@@ -274,7 +274,7 @@
+ }
+ static uint64_t spu_workload_fingerprint_cached(const uint8_t* image, size_t n)
+ {
+-    enum { SLOTS = 8 };
++    enum { SLOTS = 64 };
+     static struct { const uint8_t* image; size_t n; uint64_t content, fp; } s_fp[SLOTS];
+     static unsigned s_next;
+ #ifdef _WIN32

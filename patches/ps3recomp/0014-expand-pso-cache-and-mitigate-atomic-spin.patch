@@ -1,0 +1,155 @@
+From: Antigravity (locally tested) / reviewed for integration
+Subject: [PATCH 0014] D3D12: expand shader caches and mitigate SPU GETLLAR contention
+
+Retains the supplied 0013 cache sizes, reverse lookups and MRU promotion.
+Integration adjustments:
+- Preserve valid VS/FP cache comments and patch context.
+- Unlock the reservation line before yielding the host thread.
+- Keep the diagnostic GETLLAR log and bound the submitted PSO array.
+- Claimed scene FPS and local benchmark gains require independent reproduction.
+
+diff --git a/libs/video/rsx_d3d12_backend.c b/libs/video/rsx_d3d12_backend.c
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -217,7 +217,7 @@
+                          * recently used is the one given to a new texture */
+ } VPTexSlot;
+ /* Distinct textures uploadable per frame. */
+-#define VP_TEX_SLOTS 256
++#define VP_TEX_SLOTS 512
+ /* Guest texture uploads are staged in one persistently mapped upload buffer,
+  * a part per frame in flight, reset when that frame's command allocator is
+  * (the GPU has finished its copies by then). A committed upload buffer per
+@@ -236,12 +236,7 @@
+     ID3DBlob* vs;
+     int uses_c03;
+ } VPVSEntry;
+-#define VP_VS_CACHE 128 /* wave uses 5+ distinct VPs; at 4 the cache
+-                         * thrashed every frame and eviction shifted slots
+-                         * under recorded vs_idx values -- the display mesh
+-                         * drew with the WRONG vertex program (sub-rect +
+-                         * edge slivers instead of fullscreen). A fight in
+-                         * SoulCalibur II HD uses more than 16. */
++#define VP_VS_CACHE 2048 /* Keep recorded VS slots stable across complex scenes. */
+ 
+ /* Compiled guest-FP pipeline cache: decompiled VS (by cache slot) + decompiled
+  * PS (fragment ucode at fp_addr). */
+@@ -274,7 +269,7 @@
+  * single frame, so the FIFO evicted entries that were needed again immediately
+  * and ~17 shaders were recompiled EVERY frame -- about half the frame's CPU
+  * time. Entries are small (a PSO pointer plus key fields). */
+-#define VP_FP_CACHE 256
++#define VP_FP_CACHE 4096
+ 
+ /* ---------------------------------------------------------------------------
+  * Internal state
+@@ -1951,7 +1946,7 @@
+       const u32 instrs = rsx_vp_program_size_instrs(vuc, vlen);
+       if (instrs) vlen = instrs * 16u; }
+     u32 hash = vp_hash_ucode(vuc, vlen);
+-    for (int i = 0; i < s_d3d.vp_vs_n; i++)
++    for (int i = s_d3d.vp_vs_n - 1; i >= 0; i--)
+         if (s_d3d.vp_vs[i].hash == hash) return i;
+ 
+     static char hlsl[262144];
+@@ -2376,18 +2371,27 @@
+      * War HD uploads its fragment programs into a ring every frame: keyed on the
+      * address, every draw of every frame missed and went through a full
+      * decompile + D3DCompile (179 draws -> seconds per frame on its menu). */
+-    for (int i = 0; i < s_d3d.vp_fp_n; i++)
+-        if (s_d3d.vp_fp[i].ucode_hash != uhash) continue;   /* cheap reject first */
+-        else if (s_d3d.vp_fp[i].vs_idx == vs_idx &&
+-            s_d3d.vp_fp[i].vs_hash == vs_hash && s_d3d.vp_fp[i].gen == s_d3d.vp_gen &&
+-            s_d3d.vp_fp[i].blend == blend && s_d3d.vp_fp[i].nrt == nrt &&
+-            s_d3d.vp_fp[i].rtfmt == (u32)rtfmt && s_d3d.vp_fp[i].ctrl == ctrl &&
+-            s_d3d.vp_fp[i].ucode_hash == uhash && s_d3d.vp_fp[i].cmask == cmask &&
+-            s_d3d.vp_fp[i].cull == cull &&
+-            s_d3d.vp_fp[i].cube_mask == cube_mask && s_d3d.vp_fp[i].zs == zs &&
+-            s_d3d.vp_fp[i].unnorm_mask == unnorm_mask &&
+-            (!unnorm_mask || memcmp(s_d3d.vp_fp[i].unnorm_dim, unnorm_dim, sizeof(s_d3d.vp_fp[i].unnorm_dim)) == 0))
+-            return s_d3d.vp_fp[i].pso;
++    for (int i = s_d3d.vp_fp_n - 1; i >= 0; i--) {
++        if (s_d3d.vp_fp[i].ucode_hash != uhash) continue;   /* cheap reject first */
++        else if (s_d3d.vp_fp[i].vs_idx == vs_idx &&
++            s_d3d.vp_fp[i].vs_hash == vs_hash && s_d3d.vp_fp[i].gen == s_d3d.vp_gen &&
++            s_d3d.vp_fp[i].blend == blend && s_d3d.vp_fp[i].nrt == nrt &&
++            s_d3d.vp_fp[i].rtfmt == (u32)rtfmt && s_d3d.vp_fp[i].ctrl == ctrl &&
++            s_d3d.vp_fp[i].ucode_hash == uhash && s_d3d.vp_fp[i].cmask == cmask &&
++            s_d3d.vp_fp[i].cull == cull &&
++            s_d3d.vp_fp[i].cube_mask == cube_mask && s_d3d.vp_fp[i].zs == zs &&
++            s_d3d.vp_fp[i].unnorm_mask == unnorm_mask &&
++            (!unnorm_mask || memcmp(s_d3d.vp_fp[i].unnorm_dim, unnorm_dim, sizeof(s_d3d.vp_fp[i].unnorm_dim)) == 0))
++        {
++            /* Keep frequently reused PSOs near the end of the search. */
++            if (i != s_d3d.vp_fp_n - 1) {
++                VPFPEntry tmp = s_d3d.vp_fp[i];
++                s_d3d.vp_fp[i] = s_d3d.vp_fp[s_d3d.vp_fp_n - 1];
++                s_d3d.vp_fp[s_d3d.vp_fp_n - 1] = tmp;
++            }
++            return s_d3d.vp_fp[s_d3d.vp_fp_n - 1].pso;
++        }
++    }
+     s_perf_pso_miss++;      /* falls through to a full decompile + D3DCompile */
+     /* PSOMISSDBG=1: on a miss, name the key field that differs from an existing
+      * entry for the same program. "the cache misses" is not actionable; "it
+@@ -5876,7 +5880,10 @@
+     for (u32 d = 0; d < s_dbg_last_draws && d < MAX_DRAWS; d++) {
+         D3D12DrawRecord* dr = &s_d3d.draws[d];
+         if (dr->is_vp && !dr->is_clear && dr->prepared_pso) {
+-            submitted_psos[submitted_pso_count++] = dr->prepared_pso;
++            if (submitted_pso_count < MAX_DRAWS)
++                submitted_psos[submitted_pso_count++] = dr->prepared_pso;
++            else
++                dr->prepared_pso->lpVtbl->Release(dr->prepared_pso);
+             dr->prepared_pso = NULL;
+         }
+     }
+diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
+--- a/runtime/spu/spu_channels.c
++++ b/runtime/spu/spu_channels.c
+@@ -766,20 +766,31 @@
+         if (!llar_fast) { ctx->resv_ea = ea; ctx->resv_valid = 1; }   /* the fast path published it already */
+         ctx->atomic_stat = 4;
+         ctx->dbg_getllar++;
+-        /* A GETLLAR re-issued millions of times on one line is an SPU spin-wait
+-         * that nobody is releasing (a ticket lock, a counter barrier). Say so
+-         * once per line with the line's head, so the stuck word is visible
+-         * without a per-function probe. */
+-        { static SPU_THREAD_LOCAL uint32_t t_ea; static SPU_THREAD_LOCAL unsigned long t_n;
+-          if (ea != t_ea) { t_ea = ea; t_n = 0; }
+-          else if (++t_n == 4000000) {
+-              const uint8_t* m = vm_base + ea;
+-              fprintf(stderr, "[spu-spin] img=%d pc=0x%05X lr=0x%05X GETLLAR ea=0x%08X x4M; line:"
+-                              " %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X\n",
+-                      ctx->image_id, (unsigned)(ctx->pc & SPU_LS_MASK), ctx->gpr[0]._u32[0] & SPU_LS_MASK, ea,
+-                      m[0],m[1],m[2],m[3], m[4],m[5],m[6],m[7], m[8],m[9],m[10],m[11], m[12],m[13],m[14],m[15]);
+-          } }
+-        if (!llar_fast) spu_lockline_unlock();
++        /* A GETLLAR re-issued millions of times on one line is an SPU spin-wait
++         * that nobody is releasing (a ticket lock, a counter barrier). Say so
++         * once per line with the line's head, so the stuck word is visible
++         * without a per-function probe. */
++        unsigned long getllar_retries = 0;
++        { static SPU_THREAD_LOCAL uint32_t t_ea; static SPU_THREAD_LOCAL unsigned long t_n;
++          if (ea != t_ea) { t_ea = ea; t_n = 0; }
++          else ++t_n;
++          getllar_retries = t_n;
++          if (t_n == 4000000) {
++              const uint8_t* m = vm_base + ea;
++              fprintf(stderr, "[spu-spin] img=%d pc=0x%05X lr=0x%05X GETLLAR ea=0x%08X x4M; line:"
++                              " %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X\n",
++                      ctx->image_id, (unsigned)(ctx->pc & SPU_LS_MASK), ctx->gpr[0]._u32[0] & SPU_LS_MASK, ea,
++                      m[0],m[1],m[2],m[3], m[4],m[5],m[6],m[7], m[8],m[9],m[10],m[11], m[12],m[13],m[14],m[15]);
++          } }
++        if (!llar_fast) spu_lockline_unlock();
++        /* Schedule other host threads only after releasing the reservation lock. */
++#if defined(_WIN32)
++        if (getllar_retries && (getllar_retries & 0x1Fu) == 0) YieldProcessor();
++        if (getllar_retries > 500 && (getllar_retries & 0x3FFu) == 0) Sleep(0);
++#elif defined(__x86_64__) || defined(__i386__)
++        if (getllar_retries && (getllar_retries & 0x1Fu) == 0) __builtin_ia32_pause();
++        if (getllar_retries > 500 && (getllar_retries & 0x3FFu) == 0) sched_yield();
++#endif
+         /* SPU_LLARWATCH=<hex EA>: every GETLLAR of that line, with the LSA it
+          * used and the first word as it lands in BOTH places.
+          *
