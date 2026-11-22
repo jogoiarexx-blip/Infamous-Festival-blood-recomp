@@ -25,6 +25,12 @@ O rastreamento introduz custo elevado e não deve ser comparado numericamente co
 
 O perfil agregado de jobs SPU em 80 segundos apontou como maiores acumulados as imagens 7 (3,55 s em 2.678 jobs), 8 (1,85 s em 3.403) e 17 (1,29 s em 658). Isto ainda não identifica qual job impede o avanço do quadro. O hash seguro de fingerprint SPU medido localmente custou 28,7 ms para 37.000 consultas e 193 MB examinados em 80 segundos; não é o gargalo observado.
 
+## Decompilação focal e experimento descartado
+
+O Ghidra 12.2, executado localmente sobre o ELF do usuário, confirmou a máquina de estados: a rotina da thread principal só avança quando o estado chega a 4; a thread que conduz tarefas leves reavalia contadores de fila e a conclusão dos jobs antes de publicar esse estado. O REA instalado recusou esse ELF PowerPC no provedor Windows, então a análise focal foi feita diretamente no Ghidra. Nenhum trecho decompilado foi publicado.
+
+Um teste **local e reversível** acrescentou uma pausa de 1 ms após cada 256 chamadas curtas consecutivas de espera. Com o mesmo roteiro, o pedido de flip 1030 apareceu a 96,8 s, contra 52,3 s na candidata integrada sem a pausa. Esse experimento piorou muito a transição e foi descartado. O arquivo original do timer foi restaurado por comparação de hash e a build Windows foi recompilada; a alteração experimental não integra a PR.
+
 ## Correções publicadas e validação
 
 - PR #16: publicação atômica do índice LFQueue, incorporada à main.
