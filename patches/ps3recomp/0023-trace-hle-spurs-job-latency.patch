@@ -9,6 +9,24 @@ diff --git a/include/ps3emu/ps3_ftrace.h b/include/ps3emu/ps3_ftrace.h
  };
  
  /* selectany (a COMDAT "any": one definition kept, every object sees the same
+@@ -108,7 +109,7 @@
+     __atomic_store_n(&s->on, 3, __ATOMIC_RELEASE);
+     /* Close the open usleep runs; their threads may still be in them. */
+     for (uint32_t t = 0; t < PS3_FT_TIDS; t++) {
+-        if (!s->us[t].n) continue;
++        if (!s->us[t].n || s->us[t].t1 - s->us[t].t0 < s->min) continue;
+         const uint32_t i = __atomic_fetch_add(&s->n, 1, __ATOMIC_RELAXED);
+         if (i >= s->cap) break;
+         ps3_ft_rec r = { s->us[t].t0, s->us[t].t1, s->us[t].n, s->us[t].lr, t, PS3_FT_USLEEP };
+@@ -210,7 +211,7 @@
+         s->us[tid].t1 = t1; s->us[tid].n++;
+         return;
+     }
+-    if (s->us[tid].n)
++    if (s->us[tid].n && s->us[tid].t1 - s->us[tid].t0 >= s->min)
+         ps3_ft_span(PS3_FT_USLEEP, tid, s->us[tid].n, s->us[tid].lr, s->us[tid].t0, s->us[tid].t1);
+     s->us[tid].t0 = t0; s->us[tid].t1 = t1; s->us[tid].lr = lr; s->us[tid].n = 1;
+ }
 diff --git a/runtime/spu/spu_workload.c b/runtime/spu/spu_workload.c
 --- a/runtime/spu/spu_workload.c
 +++ b/runtime/spu/spu_workload.c
