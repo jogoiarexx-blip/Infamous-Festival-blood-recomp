@@ -29,6 +29,8 @@ O perfil agregado de jobs SPU em 80 segundos apontou como maiores acumulados as 
 
 O Ghidra 12.2, executado localmente sobre o ELF do usuário, confirmou a máquina de estados: a rotina da thread principal só avança quando o estado chega a 4; a thread que conduz tarefas leves reavalia contadores de fila e a conclusão dos jobs antes de publicar esse estado. O REA instalado recusou esse ELF PowerPC no provedor Windows, então a análise focal foi feita diretamente no Ghidra. Nenhum trecho decompilado foi publicado.
 
+Uma contagem temporária no arquivo PPU gerado mostrou que aproximadamente 188,6 mil de 200 mil consultas sucessivas do worker na cena 3D (94,3%) ocorreram no estado 2. A decompilação liga esse estado à consulta de conclusão da cadeia de jobs e de seus contadores, e não a uma simples espera de GPU. O teste instrumentado marcou 2,60 pedidos de flip/s na janela 1030–1100; como o arquivo gerado foi instrumentado, esse número não substitui o benchmark sem diagnóstico. A fonte gerada foi restaurada byte a byte a partir de backup local antes da recompilação.
+
 Um teste **local e reversível** acrescentou uma pausa de 1 ms após cada 256 chamadas curtas consecutivas de espera. Com o mesmo roteiro, o pedido de flip 1030 apareceu a 96,8 s, contra 52,3 s na candidata integrada sem a pausa. Esse experimento piorou muito a transição e foi descartado. O arquivo original do timer foi restaurado por comparação de hash e a build Windows foi recompilada; a alteração experimental não integra a PR.
 
 ## Correções publicadas e validação
