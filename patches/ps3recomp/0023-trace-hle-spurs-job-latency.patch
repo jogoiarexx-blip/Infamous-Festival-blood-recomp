@@ -20,25 +20,7 @@ diff --git a/runtime/spu/spu_workload.c b/runtime/spu/spu_workload.c
  
  static void spu_workload_report_miss(const char* path, uint64_t fp, uint32_t size,
                                       uint32_t owner_ea);   /* below */
-@@ -286,17 +287,6 @@
- #define FP_LOCK()   pthread_mutex_lock(&s_fp_lock)
- #define FP_UNLOCK() pthread_mutex_unlock(&s_fp_lock)
- #endif
--    /* Fast path: identical pointer and size already cached (very common for static/resident job binaries) */
--    FP_LOCK();
--    for (unsigned i = 0; i < SLOTS; ++i) {
--        if (s_fp[i].image == image && s_fp[i].n == n) {
--            const uint64_t fp = s_fp[i].fp;
--            FP_UNLOCK();
--            return fp;
--        }
--    }
--    FP_UNLOCK();
--
-     const uint64_t content = spu_workload_content_hash(image, n);
-     FP_LOCK();
-     for (unsigned i = 0; i < SLOTS; ++i)
-@@ -1098,7 +1088,18 @@
+@@ -1088,7 +1088,18 @@
      if (s_prof < 0) { const char* e = ps3_env_once("SPU_JOBPROF"); s_prof = e ? atoi(e) : 0; }
      struct timespec t0, t1;
      if (s_prof) timespec_get(&t0, TIME_UTC);
