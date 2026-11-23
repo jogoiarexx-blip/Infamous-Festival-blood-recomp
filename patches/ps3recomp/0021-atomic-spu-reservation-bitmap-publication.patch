@@ -1,0 +1,91 @@
+diff --git a/runtime/spu/spu_coh_bitmap.h b/runtime/spu/spu_coh_bitmap.h
+--- a/runtime/spu/spu_coh_bitmap.h
++++ b/runtime/spu/spu_coh_bitmap.h
+@@ -40,10 +40,10 @@
+ 
+ static inline int spu_coh_line_reserved(uint32_t addr)
+ {
+-    const unsigned char* bits = g_spu_coh_bits;
++    const unsigned char* bits = __atomic_load_n(&g_spu_coh_bits, __ATOMIC_ACQUIRE);
+     if (!bits) return 0;
+     const uint32_t line = addr >> SPU_COH_LINE_SHIFT;
+-    return (bits[line >> 3] >> (line & 7)) & 1;
++    return (__atomic_load_n(&bits[line >> 3], __ATOMIC_RELAXED) >> (line & 7)) & 1;
+ }
+ 
+ #ifdef __cplusplus
+diff --git a/runtime/spu/spu_coherency.c b/runtime/spu/spu_coherency.c
+--- a/runtime/spu/spu_coherency.c
++++ b/runtime/spu/spu_coherency.c
+@@ -135,11 +135,9 @@
+ static unsigned char s_coh_bitmap[SPU_COH_BITMAP_SZ];
+ 
+ /* g_spu_coh_bits (spu_coh_bitmap.h) stays NULL until the first GETLLAR
+- * anywhere. That keeps the PPU fast path off the bitmap entirely for a title
+- * that runs no SPU code, and keeps every existing test that stores through
+- * vm_write* paying one compare against a hot global. Written under the lock;
+- * read unlocked, where a stale NULL costs at most one missed event on the very
+- * first reservation of the run. */
++ * anywhere. PPU stores read this pointer and the bitmap without the lock.
++ * Publish both atomically: missing a new mark can lose the reservation event
++ * that an SPURS waiter needs to observe. */
+ 
+ /* Every live virtual context may retain a reservation between scheduling
+  * quanta; physical SPU count is not a bound on this set. All access is under
+@@ -168,10 +166,12 @@
+      * the bitmap byte. */
+     uint32_t line = ea >> SPU_COH_LINE_SHIFT;
+     const unsigned char bit = (unsigned char)(1u << (line & 7));
+-    if (!(s_coh_bitmap[line >> 3] & bit))
+-        s_coh_bitmap[line >> 3] |= bit;
+-    if (!g_spu_coh_bits)
+-        g_spu_coh_bits = s_coh_bitmap;
++    unsigned char* byte = &s_coh_bitmap[line >> 3];
++    unsigned char old = __atomic_load_n(byte, __ATOMIC_RELAXED);
++    if (!(old & bit))
++        __atomic_store_n(byte, (unsigned char)(old | bit), __ATOMIC_RELAXED);
++    if (!__atomic_load_n(&g_spu_coh_bits, __ATOMIC_RELAXED))
++        __atomic_store_n(&g_spu_coh_bits, s_coh_bitmap, __ATOMIC_RELEASE);
+ 
+     if (!ctx) return;
+     for (unsigned i = 0; i < s_coh_n; i++)
+diff --git a/runtime/spu/tests/test_shared_header_data.c b/runtime/spu/tests/test_shared_header_data.c
+--- a/runtime/spu/tests/test_shared_header_data.c
++++ b/runtime/spu/tests/test_shared_header_data.c
+@@ -22,19 +22,23 @@
+ const void* shared_b_coh_bits(void);
+ const void* shared_b_ft(void);
+ 
+-static unsigned char s_bitmap[1u << 21];   /* one bit per 128-byte line, 4 GiB */
++static unsigned char s_bitmap[1u << 22];   /* one bit per 128-byte line, 4 GiB */
+ 
+ int main(void)
+ {
+     int fail = 0;
+     const int before = shared_b_line_reserved(0x1000);
+ 
+-    s_bitmap[(0x1000u >> 7) >> 3] |= (unsigned char)(1u << ((0x1000u >> 7) & 7));
+-    g_spu_coh_bits = s_bitmap;   /* what spu_coherency.c does on the first reservation */
++    __atomic_store_n(&s_bitmap[(0x1000u >> 7) >> 3],
++                     (unsigned char)(1u << ((0x1000u >> 7) & 7)), __ATOMIC_RELEASE);
++    __atomic_store_n(&g_spu_coh_bits, s_bitmap, __ATOMIC_RELEASE);
+ 
+     const int after_here  = spu_coh_line_reserved(0x1000);
+     const int after_there = shared_b_line_reserved(0x1000);
+     const int other_line  = shared_b_line_reserved(0x2000);
++    __atomic_store_n(&s_bitmap[(0x2000u >> 7) >> 3],
++                     (unsigned char)(1u << ((0x2000u >> 7) & 7)), __ATOMIC_RELEASE);
++    const int new_line = shared_b_line_reserved(0x2000);
+ 
+     if (before != 0)          { printf("[FAIL] reserved before the store: %d\n", before); fail++; }
+     else                      printf("[PASS] not reserved before the store\n");
+@@ -44,6 +48,8 @@
+     else                      printf("[PASS] store seen in the other object\n");
+     if (other_line != 0)      { printf("[FAIL] unreserved line reads as reserved\n"); fail++; }
+     else                      printf("[PASS] unreserved line stays clear\n");
++    if (new_line != 1)        { printf("[FAIL] newly reserved line is invisible\n"); fail++; }
++    else                      printf("[PASS] new reservation is visible\n");
+     if (shared_b_coh_bits() != (const void*)&g_spu_coh_bits)
+                               { printf("[FAIL] g_spu_coh_bits has two addresses\n"); fail++; }
+     else                      printf("[PASS] g_spu_coh_bits is one variable\n");
+
