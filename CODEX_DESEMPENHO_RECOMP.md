@@ -48,3 +48,11 @@ Um teste **local e reversível** acrescentou uma pausa de 1 ms após cada 256 ch
 3. Medir quadro apresentado real, tempo de GPU/fences e latência por quadro sem o custo do rastreamento amplo.
 4. Repetir cada variante pelo menos três vezes, registrar distribuição de intervalos por apresentação e calcular 1% low em uma sequência longa.
 5. Validar gameplay, animações e outras plataformas antes de mesclar a PR #15. Não usar o ganho de 6,4% de uma única janela como justificativa de merge.
+
+## Medição de 23/11/2026 — jobs SPURS e custo do rastreador
+
+O patch 0023 (PR #20) inclui os jobs SPURS executados pelo caminho HLE na linha do tempo por pedido de flip. Na captura de 20 s, a PPU principal passou em média 247,7 ms por intervalo aguardando a conclusão da tarefa, enquanto os jobs HLE medidos somaram 25,5 ms por intervalo. Esta soma pode conter trabalho paralelo e não identifica, sozinha, a dependência que limita cada quadro. Uma sonda local mostrou contadores de progresso avançando, com uma posição uma unidade atrás durante o job ativo; o escritor decisivo ainda não foi identificado. Nenhum contador foi forçado.
+
+O rastreador passou a aplicar seu limite mínimo de 20 µs também às esperas curtas isoladas. Na captura anterior, 1.357.831 spans de `usleep` eram menores que esse limite e somavam 1,55 s entre todas as threads, diante de 43,27 s de espera total somada. Uma nova captura do mesmo período registrou 19.207 spans e 796.787 bytes, contra 1.376.511 spans e 55.091.337 bytes antes do filtro, sem registros descartados. As execuções distintas tiveram medianas de 287,1 e 310,2 ms por intervalo; essa variação não comprova ganho de FPS do jogo.
+
+Com o rastreamento desligado, a build restaurada e recompilada levou 21,797 s para 70 pedidos de flip na mesma janela (3,21 pedidos/s). Duas execuções anteriores comparáveis levaram 23,750 s e 22,375 s. Há apenas uma amostra por variante, portanto o resultado não estabelece melhora estatística. A fonte PPU gerada usada na sonda foi restaurada pelo hash e não integra o patch público. O próximo trabalho é atribuir a latência entre o avanço dos contadores da fila e a publicação do estado final a um produtor concreto, antes de alterar a sincronização.
