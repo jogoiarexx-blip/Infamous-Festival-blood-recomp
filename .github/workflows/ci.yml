@@ -52,4 +52,12 @@ jobs:
         run: python tools/test_fp_program_lifetime.py --sdk out/ci-sdk --cc gcc --output-dir out/ci-fp-lifetime
       - name: Regressão SPU com instruções sintéticas
         run: python tools/test_spu_policy_image_collision.py --sdk out/ci-sdk --cc gcc --output-dir out/ci-spu
+      - name: Publicação do mapa de reservas SPU
+        run: |
+          mkdir -p out/ci-bitmap
+          cc -std=gnu17 -O2 -I out/ci-sdk/include -I out/ci-sdk/runtime/spu -c out/ci-sdk/runtime/spu/tests/test_shared_header_data.c -o out/ci-bitmap/a.o
+          c++ -std=gnu++17 -O2 -I out/ci-sdk/include -I out/ci-sdk/runtime/spu -c out/ci-sdk/runtime/spu/tests/test_shared_header_data_b.cpp -o out/ci-bitmap/b.o
+          c++ out/ci-bitmap/a.o out/ci-bitmap/b.o -o out/ci-bitmap/test
+          out/ci-bitmap/test
+
 
