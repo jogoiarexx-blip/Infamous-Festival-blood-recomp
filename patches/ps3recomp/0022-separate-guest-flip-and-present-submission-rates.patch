@@ -1,0 +1,71 @@
+diff --git a/libs/video/rsx_d3d12_backend.c b/libs/video/rsx_d3d12_backend.c
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -6399,12 +6458,13 @@
+ 
+     /* Present, on the vblank unless D3D12_VSYNC=0: that one is for measuring a
+      * title past the display's rate. Skipped for an offscreen-only batch. */
++    HRESULT present_hr = S_FALSE;
+     if (s_present_this_frame) {
+         if (!d3d12_vsync_off())
+-            s_d3d.swap_chain->lpVtbl->Present(s_d3d.swap_chain, 1, 0);
++            present_hr = s_d3d.swap_chain->lpVtbl->Present(s_d3d.swap_chain, 1, 0);
+         else
+-            s_d3d.swap_chain->lpVtbl->Present(s_d3d.swap_chain, 0,
+-                                              s_d3d.tearing ? DXGI_PRESENT_ALLOW_TEARING : 0);
++            present_hr = s_d3d.swap_chain->lpVtbl->Present(s_d3d.swap_chain, 0,
++                                                            s_d3d.tearing ? DXGI_PRESENT_ALLOW_TEARING : 0);
+     }
+     rdoc_frame_end();
+ 
+@@ -6412,23 +6472,42 @@
+ 
+     s_d3d.frame_count++;
+ 
+-    /* RPCS3-style titlebar stats, refreshed once a second: presented FPS,
+-     * draw count of the last frame, and the backbuffer size. */
++    /* Count guest flip requests, successful Present submissions and render
++     * batches separately. One guest frame may produce multiple batches. */
+     {
++        extern unsigned cellGcm_flip_request_count(void);
+         static ULONGLONG s_tt0 = 0;
+-        static u64 s_tframes = 0;
+-        s_tframes++;
++        static u64 s_tsubmits = 0, s_tbatches = 0, s_total_submits = 0;
++        static u32 s_prev_flips = 0;
++        s_tbatches++;
+         ULONGLONG tnow = GetTickCount64();
++        u32 flips = cellGcm_flip_request_count();
++        if (present_hr == S_OK) {
++            s_tsubmits++;
++            s_total_submits++;
++            { static int trace = -1;
++              if (trace < 0) trace = getenv("RSX_PRESENT_TRACE") ? 1 : 0;
++              if (trace)
++                  fprintf(stderr, "[present-submit] n=%llu at=%llums batches=%llu flips=%u draws=%u\n",
++                          (unsigned long long)s_total_submits,
++                          (unsigned long long)tnow,
++                          (unsigned long long)s_d3d.frame_count,
++                          flips, s_dbg_last_draws); }
++        }
+         if (s_tt0 == 0) s_tt0 = tnow;
+         if (tnow - s_tt0 >= 1000 && s_d3d.hwnd) {
+             extern char g_rsx_title_base[128];
+             char tb[256];
+-            snprintf(tb, sizeof(tb), "%s | FPS: %.2f | draws: %u | %ux%u",
++            snprintf(tb, sizeof(tb), "%s | Flip req/s: %.2f | Present/s: %.2f | batches/s: %.2f | draws: %u | %ux%u",
+                      g_rsx_title_base,
+-                     s_tframes * 1000.0 / (double)(tnow - s_tt0),
++                     (u32)(flips - s_prev_flips) * 1000.0 / (double)(tnow - s_tt0),
++                     s_tsubmits * 1000.0 / (double)(tnow - s_tt0),
++                     s_tbatches * 1000.0 / (double)(tnow - s_tt0),
+                      s_dbg_last_draws, s_d3d.width, s_d3d.height);
+             SetWindowTextA(s_d3d.hwnd, tb);
+-            s_tframes = 0;
++            s_prev_flips = flips;
++            s_tsubmits = 0;
++            s_tbatches = 0;
+             s_tt0 = tnow;
+         }
+     }
+
