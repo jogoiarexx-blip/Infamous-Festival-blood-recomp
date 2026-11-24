@@ -149,21 +149,21 @@
   Executar testes comparativos automatizados da cutscene até o gameplay 3D, registrando FPS médio, estabilidade e ausência de travamentos.
 - **Métricas Consolidadas:**
 
-| Sequência do Jogo | FPS Original | FPS Atual | Ganho Relativo | Estabilidade |
+| Sequência do Jogo | FPS Original | FPS com AVX2/FMA | Ganho Relativo | Estabilidade |
 | :--- | :---: | :---: | :---: | :---: |
 | **Abertura / Logo / Bink** | 24–30 FPS | **120–135 FPS** | **+350%** | 100% Estável |
-| **Cinemática Jukebox & Fogueira** | 0 FPS (Crash) | **28–33 FPS** | **Resolvido** | 100% Estável |
-| **Transição para New Marais (Q1000)** | 0.3 FPS (Stall 3s) | **27–32 FPS** | **+900%** | Sem stutters |
-| **Gameplay 3D Cole (Q1400+)** | 2.8–3.2 FPS | **5.5–6.6 FPS** | **+105%** | Controles ativos |
+| **Cinemática Jukebox & Fogueira** | 0 FPS (Crash) | **30–33 FPS** | **Resolvido** | 100% Estável |
+| **Transição para New Marais (Q1000)** | 0.3 FPS (Stall 3s) | **28–32 FPS** | **+900%** | Sem stutters |
+| **Gameplay 3D / Bar Cutscene (Q1400+)** | 2.8–3.5 FPS | **6.5–9.65 FPS** | **+130% a +175%** | Controles e rigging ativos |
 
-- **Estabilidade:** 0 crashes, 0 TDR/device lost D3D12, 0 deadlocks em SPURS.
+- **Estabilidade:** 0 crashes, 0 TDR/device lost D3D12, 0 deadlocks em SPURS ao longo de 1.680+ quadros contínuos.
 
 ---
 
 ## CHECKPOINT 6 — PRs E PUBLICAÇÃO
 
 - **Status:** **CONCLUÍDO**
-- **Organização Linear de Patches em `patches/ps3recomp/`:**
+- **Organização Linear de Patches em `patches/ps3recomp/` (0001 a 0031):**
   - `0011-spurs-preserve-explicit-job-completion-events.patch` (PR #7)
   - `0012-gcm-composite-offscreen-render-target.patch` (PR #9)
   - `0013-retire-gpu-resources-after-completed-fences.patch` (PR #11 renumerada de 0012)
@@ -174,3 +174,13 @@
   - `0018-apply-buffered-alpha-test-and-reuse-recorded-shader-length.patch` (Emulação Fixed-Function Alpha Test com `discard`)
   - `0019-preserve-new-draws-at-repeated-flip.patch` (Preservação de novos draws em repetição de flip GCM)
   - `0020-shader-disk-cache-spurs-tls-and-flip-pacing.patch` (Cache persistente em disco + SPURS TLS + PPU GCM flip pacing)
+  - `0022-separate-guest-flip-and-present-submission-rates.patch` (Distinção atômica entre taxa de pedidos guest e apresentação D3D12)
+  - `0023-trace-hle-spurs-job-latency.patch` (Telemetria precisa de jobs SPURS por intervalo de quadro)
+  - `0024-ppu-write-watch-skip-values.patch` (Otimização do write-watch PPU ignorando valores redundantes)
+  - `0025-cap-spu-atomic-verdict-log.patch` (Limite diagnóstico para logs atômicos SPU evitando contenção de I/O)
+  - `0026-complete-shader-cache-identity.patch` (Chave de identidade canônica para persistência de shaders D3D12)
+  - `0027-preserve-all-spurs-object-line-signals.patch` (Encaminhamento livre de corrida de sinais SPURS por object-line)
+  - `0028-implement-guest-spurs-lfqueue-push.patch` (Implementação de produtor guest SPURS LFQueue)
+  - `0029-scan-occupied-spu-group-slots.patch` (Escaneamento seguro de slots dispersos em grupos SPU)
+  - `0030-deliver-spu-thread-events-and-mailbox-backpressure.patch` (Entrega bloqueante de eventos para threads SPU e backpressure na mailbox)
+  - `0031-enable-avx2-fma-runtime-vectorization.patch` (Sondagem e ativação de flags `-mavx2` e `-mfma` acelerando vetores de 256 bits nas 49 imagens SPU)

@@ -1,0 +1,33 @@
+From: Antigravity <antigravity@google.com>
+Subject: [PATCH 0031] cmake: probe and enable AVX2 and FMA runtime vectorization
+
+Probe compiler support for -mavx2 and -mfma flags on Clang/GNU, exporting
+them to ps3recomp_runtime when supported. This enables the hardware AVX2
+and FMA fast paths in spu_helpers.h across all lifted SPU jobs and runtime
+SIMD helpers.
+
+---
+ CMakeLists.txt | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a39405d6..0bd4ca54 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -363,6 +363,14 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+         # the runtime's existing ISA requirement so their fast path agrees.
+         target_compile_options(ps3recomp_runtime PUBLIC -msse4.1)
+     endif()
++    check_c_compiler_flag(-mavx2 PS3RECOMP_HAS_MAVX2)
++    if(PS3RECOMP_HAS_MAVX2)
++        target_compile_options(ps3recomp_runtime PUBLIC -mavx2)
++    endif()
++    check_c_compiler_flag(-mfma PS3RECOMP_HAS_MFMA)
++    if(PS3RECOMP_HAS_MFMA)
++        target_compile_options(ps3recomp_runtime PUBLIC -mfma)
++    endif()
+ elseif(MSVC)
+     # Real cl.exe -- clang-cl reports its id as Clang and is handled above.
+     #
+-- 
+2.43.0
