@@ -110,10 +110,18 @@ index adfbf89..84e6350 100644
  s32 cellSpursEventFlagSet(CellSpursEventFlag* eventFlag, u16 bits);
  s32 cellSpursEventFlagWait(CellSpursEventFlag* eventFlag, u16* bits,
 diff --git a/tests/test_spurs_queue_size.c b/tests/test_spurs_queue_size.c
-index 4ef109b..b250ef5 100644
+index 4ef109b..13bdef1 100644
 --- a/tests/test_spurs_queue_size.c
 +++ b/tests/test_spurs_queue_size.c
-@@ -66,7 +66,31 @@ int main(void)
+@@ -19,6 +19,7 @@ void ps3_ww_report_inline(uint32_t a, uint64_t v, int w) { (void)a; (void)v; (vo
+ void ppu_resv_break_store(uint64_t ea) { (void)ea; }
+ void sys_event_queue_cancel_by_id(u32 id) { (void)id; }
+ void sys_event_queue_uncancel_by_id(u32 id) { (void)id; }
++unsigned long long ps3_ms_now(void) { return 0; }
+ 
+ 
+ #define Q    0x1000u   /* 128-byte aligned queue */
+@@ -66,7 +67,31 @@ int main(void)
      assert(cellSpursQueueSize(Q, OUT) == (s32)CELL_SPURS_TASK_ERROR_INVAL);
      assert(vm_read32(OUT) == 0x12345678u);
  
