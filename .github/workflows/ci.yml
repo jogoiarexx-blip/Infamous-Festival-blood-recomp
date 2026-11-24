@@ -58,6 +58,4 @@ jobs:
         run: |
           cmake -S out/ci-sdk/tests/sync_stress -B out/ci-sync -G Ninja
           cmake --build out/ci-sync --target test_event_queue_destroy
-          ctest --test-dir out/ci-sync -R '^event_queue_destroy
- --output-on-failure
-
+          ctest --test-dir out/ci-sync -R event_queue_destroy --output-on-failure
