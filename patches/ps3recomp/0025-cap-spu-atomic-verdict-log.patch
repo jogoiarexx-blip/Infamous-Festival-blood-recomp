@@ -1,0 +1,18 @@
+diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
+--- a/runtime/spu/spu_channels.c
++++ b/runtime/spu/spu_channels.c
+@@ -936,9 +957,13 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
+          * the compare. Say which of them committed, or a retried failure reads
+          * as a lost update. */
+         { static int s_v = -1; static uint32_t s_vl;
++          static int s_vcap = -1, s_vn = 0;
+           if (s_v < 0) { const char* e = getenv("SPU_ATOM_EA");
+                          s_vl = e ? (uint32_t)strtoul(e, 0, 16) & ~127u : 0; s_v = s_vl ? 1 : 0; }
+-          if (s_v && (ea & ~127u) == s_vl)
++          if (s_vcap < 0) { const char* e = getenv("SPU_ATOM_EA_MAX");
++                            s_vcap = e ? atoi(e) : 48; }
++          if (s_v && (ea & ~127u) == s_vl &&
++              (!s_vcap || PS3_LOG_FIRST(s_vn, s_vcap)))
+               fprintf(stderr, "[atom-ea] PUTLLC %s lr=0x%05X ea=0x%08X\n",
+                       ctx->atomic_stat ? "FAIL" : "OK",
+                       ctx->gpr[0]._u32[0] & SPU_LS_MASK, ea); }
