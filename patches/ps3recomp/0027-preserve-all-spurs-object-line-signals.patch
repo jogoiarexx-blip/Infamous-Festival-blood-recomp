@@ -1,0 +1,187 @@
+diff --git a/runtime/spu/spu_workload.c b/runtime/spu/spu_workload.c
+--- a/runtime/spu/spu_workload.c
++++ b/runtime/spu/spu_workload.c
+@@ -1172,6 +1172,7 @@
+  * Same racy-hint rules as s_parked; an entry leaves when its task exits. */
+ #define SPU_ROUND_MAX 64
+ static volatile uint64_t s_round[SPU_ROUND_MAX];   /* (taskset<<32)|(taskId+1), 0 = free */
++static void spu_obj_owner_drop(uint32_t taskset_ea, uint32_t taskId);
+ 
+ static void spu_round_note(uint64_t key)
+ {
+@@ -1188,6 +1189,7 @@
+     const uint64_t key = ((uint64_t)taskset_ea << 32) | (uint64_t)(taskId + 1);
+     for (int i = 0; i < SPU_ROUND_MAX; i++)
+         if (s_round[i] == key) s_round[i] = 0;
++    spu_obj_owner_drop(taskset_ea, taskId);
+ }
+ 
+ /* How many round tasks are busy: out of WAIT_SIGNAL, or parked with their
+@@ -1213,22 +1215,55 @@
+ /* Last (taskset, task) that parked on each wait-object line. An LFQueue whose
+  * owner is a SPURS cannot name its consumer's taskset, and a push that lands
+  * while the consumer is busy (not parked) must still latch a signal for it. */
+-#define SPU_OBJ_OWNER_MAX 32
+-static struct { volatile uint32_t line; volatile uint32_t taskset; volatile uint32_t task; volatile int32_t pend; } s_obj_owner[SPU_OBJ_OWNER_MAX];
++typedef struct {
++    uint32_t line, taskset, task;
++    int32_t pend;
++} spu_obj_owner;
++static spu_obj_owner* s_obj_owner;
++static size_t s_obj_owner_count, s_obj_owner_cap;
++#ifdef _WIN32
++static SRWLOCK s_obj_owner_lock = SRWLOCK_INIT;
++static void spu_obj_owner_lock(void) { AcquireSRWLockExclusive(&s_obj_owner_lock); }
++static void spu_obj_owner_unlock(void) { ReleaseSRWLockExclusive(&s_obj_owner_lock); }
++#else
++static pthread_mutex_t s_obj_owner_lock = PTHREAD_MUTEX_INITIALIZER;
++static void spu_obj_owner_lock(void) { pthread_mutex_lock(&s_obj_owner_lock); }
++static void spu_obj_owner_unlock(void) { pthread_mutex_unlock(&s_obj_owner_lock); }
++#endif
+ 
+ static void spu_obj_owner_note(uint32_t wait_obj, uint32_t taskset_ea, uint32_t taskId)
+ {
+     if (!wait_obj) return;
+     const uint32_t line = wait_obj & ~0x7Fu;
+-    int free_i = -1;
+-    for (int i = 0; i < SPU_OBJ_OWNER_MAX; i++) {
+-        if (s_obj_owner[i].line == line) { s_obj_owner[i].taskset = taskset_ea; s_obj_owner[i].task = taskId; return; }
+-        if (free_i < 0 && !s_obj_owner[i].line) free_i = i;
+-    }
+-    if (free_i >= 0) {
+-        s_obj_owner[free_i].taskset = taskset_ea; s_obj_owner[free_i].task = taskId;
+-        s_obj_owner[free_i].line = line;
+-    }
++    spu_obj_owner_lock();
++    for (size_t i = 0; i < s_obj_owner_count; ++i) {
++        spu_obj_owner* owner = &s_obj_owner[i];
++        if (owner->taskset == taskset_ea && owner->task == taskId) {
++            if (owner->line != line) { owner->line = line; owner->pend = 0; }
++            spu_obj_owner_unlock();
++            return;
++        }
++    }
++    if (s_obj_owner_count == s_obj_owner_cap) {
++        size_t cap = s_obj_owner_cap ? s_obj_owner_cap * 2u : 32u;
++        spu_obj_owner* grown = (spu_obj_owner*)realloc(s_obj_owner, cap * sizeof(*grown));
++        if (!grown) { fprintf(stderr, "[spu_workload] cannot register LFQueue owner\n"); abort(); }
++        s_obj_owner = grown;
++        s_obj_owner_cap = cap;
++    }
++    s_obj_owner[s_obj_owner_count++] = (spu_obj_owner){ line, taskset_ea, taskId, 0 };
++    spu_obj_owner_unlock();
++}
++
++static void spu_obj_owner_drop(uint32_t taskset_ea, uint32_t taskId)
++{
++    spu_obj_owner_lock();
++    for (size_t i = 0; i < s_obj_owner_count; ++i) {
++        if (s_obj_owner[i].taskset != taskset_ea || s_obj_owner[i].task != taskId) continue;
++        s_obj_owner[i] = s_obj_owner[--s_obj_owner_count];
++        break;
++    }
++    spu_obj_owner_unlock();
+ }
+ 
+ void spu_taskset_parked_add(uint32_t taskset_ea, uint32_t taskId, uint32_t wait_obj)
+@@ -1350,7 +1385,11 @@
+ int spu_taskset_signal_parked_line(uint32_t obj_ea)
+ {
+     int n = 0;
+-    for (int i = 0; i < SPU_OBJ_OWNER_MAX; i++) {
++    /* Keep the owner and its pending count stable through the guest-bit write.
++     * The waiter clears that bit under this same lock, so a concurrent push
++     * cannot be consumed as the preceding signal. */
++    spu_obj_owner_lock();
++    for (size_t i = 0; i < s_obj_owner_count; ++i) {
+         if (s_obj_owner[i].line != (obj_ea & ~0x7Fu) || !s_obj_owner[i].taskset) continue;
+         /* Latched in the guest `signalled` bit, so a consumer that is busy
+          * (not parked) still sees it at its next WAIT_SIGNAL. */
+@@ -1358,10 +1397,11 @@
+          * path consumes exactly one signal per slot it reserved, so two pushes
+          * between two wakes used to strand the second slot forever. Count the
+          * pushes; the waiter re-latches the bit until the count is consumed. */
+-        __atomic_add_fetch(&s_obj_owner[i].pend, 1, __ATOMIC_SEQ_CST);
++        if (s_obj_owner[i].pend < INT32_MAX) s_obj_owner[i].pend++;
+         spu_taskset_signal_task(s_obj_owner[i].taskset, s_obj_owner[i].task);
+         n++;
+     }
++    spu_obj_owner_unlock();
+     return n;
+ }
+ 
+@@ -1606,18 +1646,16 @@
+     spu_lockline_unlock();
+     /* Signals coalesce in the bit, so consuming it outside s_sig_lock loses none. */
+     if (!drained) {
++        spu_obj_owner_lock();
+         spu_signalled_update(taskset_ea, taskId, 0);
+         /* Counted signals: consume one, re-latch if more pushes are owed. */
+-        for (int i = 0; i < SPU_OBJ_OWNER_MAX; i++) {
++        for (size_t i = 0; i < s_obj_owner_count; ++i) {
+             if (s_obj_owner[i].taskset != taskset_ea || s_obj_owner[i].task != taskId) continue;
+-            int32_t p = __atomic_load_n(&s_obj_owner[i].pend, __ATOMIC_SEQ_CST);
+-            while (p > 0) {
+-                if (__atomic_compare_exchange_n(&s_obj_owner[i].pend, &p, p - 1, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+-                    if (p - 1 > 0) spu_signalled_update(taskset_ea, taskId, 1);
+-                    break;
+-                }
+-            }
++            if (s_obj_owner[i].pend > 0 && --s_obj_owner[i].pend > 0)
++                spu_signalled_update(taskset_ea, taskId, 1);
++            break;
+         }
++        spu_obj_owner_unlock();
+     }
+     if (drained) { static int _d = 0; if (PS3_LOG_FIRST(_d, 24))
+         fprintf(stderr, "[spu_workload] task %u (taskset 0x%08X) WS_DRAIN resume "
+diff --git a/runtime/spu/tests/test_spu_workload_masked.c b/runtime/spu/tests/test_spu_workload_masked.c
+--- a/runtime/spu/tests/test_spu_workload_masked.c
++++ b/runtime/spu/tests/test_spu_workload_masked.c
+@@ -23,6 +23,8 @@
+ unsigned long long ps3_ms_now(void) { return 0; }
+ void spu_coh_notify_write(uint32_t a) { (void)a; }
+ void spu_coh_unregister(spu_context* c) { (void)c; }
++void spu_coh_forget_range(uintptr_t lo, uintptr_t hi) { (void)lo; (void)hi; }
++void spu_mfc_forget_range(uintptr_t lo, uintptr_t hi) { (void)lo; (void)hi; }
+ void spu_coh_watch_add(spu_coh_watch* w, uint32_t ea, void (*wake)(void*), void* opaque)
+ { (void)w; (void)ea; (void)wake; (void)opaque; }
+ void spu_coh_watch_remove(spu_coh_watch* w) { (void)w; }
+@@ -80,6 +82,37 @@
+     spu_workload_register_img_masked(0x2222ULL, prog_a, 4, "bad", 0x100, 0xF0, 0x20);
+     assert(spu_workload_find(0x2222ULL) == NULL);
+ 
++    /* Dispatch may reuse the same guest address for different SPU images.
++     * Pointer and length alone must never validate a cached fingerprint. */
++    const uint64_t first = spu_workload_fingerprint_cached(loaded, SIZE);
++    loaded[0x101] ^= 0x5Au;
++    const uint64_t changed = spu_workload_fingerprint_cached(loaded, SIZE);
++    assert(changed != first);
++    assert(changed == spu_workload_fingerprint(loaded, SIZE));
++    loaded[0x101] ^= 0x5Au;
++    assert(spu_workload_fingerprint_cached(loaded, SIZE) == first);
++
++    /* More than 32 distinct LFQueue wait lines must remain routable, and two
++     * consumers sharing one line must both receive its signal. */
++    static uint8_t guest_mem[1u << 20];
++    vm_base = guest_mem;
++    const uint32_t taskset = 0x10000u, first_obj = 0x40000u;
++    for (uint32_t task = 0; task < 40; ++task)
++        spu_taskset_parked_add(taskset, task, first_obj + 128u * task);
++    for (uint32_t task = 0; task < 40; ++task)
++        assert(spu_taskset_signal_parked_line(first_obj + 128u * task) == 1);
++    for (uint32_t task = 0; task < 40; ++task) {
++        spu_taskset_parked_del(taskset, task);
++        spu_taskset_round_drop(taskset, task);
++    }
++    spu_taskset_parked_add(taskset, 1, first_obj);
++    spu_taskset_parked_add(taskset, 2, first_obj);
++    assert(spu_taskset_signal_parked_line(first_obj) == 2);
++    spu_taskset_parked_del(taskset, 1);
++    spu_taskset_parked_del(taskset, 2);
++    spu_taskset_round_drop(taskset, 1);
++    spu_taskset_round_drop(taskset, 2);
++
+     printf("test_spu_workload_masked: ok\n");
+     return 0;
+ }
