@@ -1,0 +1,68 @@
+diff --git a/libs/video/rsx_d3d12_backend.c b/libs/video/rsx_d3d12_backend.c
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -1869,19 +1869,28 @@
+     if (out_err) *out_err = NULL;
+     if (!src || len == 0) return NULL;
+ 
+-    /* Version the key and the file format. Include all compilation inputs. */
++    /* Version the key and the file format. Separate fields so concatenated
++     * target/entry/name strings cannot alias another compilation request. */
+     uint64_t h = 14695981039346656037ULL;
+-    static const char cache_version[] = "rsx-d3dcompile-cache-v1";
+-    for (const char* p = cache_version; *p; p++) {
+-        h ^= (uint8_t)*p;
++    static const char cache_version[] = "rsx-d3dcompile-cache-v2";
++    const UINT flags1 = 0, flags2 = 0;
++    const char* key_fields[] = { cache_version, name ? name : "", entry, target };
++    for (size_t field = 0; field < sizeof(key_fields) / sizeof(key_fields[0]); ++field) {
++        for (const char* p = key_fields[field]; *p; ++p) {
++            h ^= (uint8_t)*p;
++            h *= 1099511628211ULL;
++        }
++        h ^= 0xFFu;
+         h *= 1099511628211ULL;
+     }
+-    for (const char* p = target; *p; p++) {
+-        h ^= (uint8_t)*p;
++    const uint8_t* flag_bytes = (const uint8_t*)&flags1;
++    for (size_t i = 0; i < sizeof(flags1); ++i) {
++        h ^= flag_bytes[i];
+         h *= 1099511628211ULL;
+     }
+-    for (const char* p = entry; *p; p++) {
+-        h ^= (uint8_t)*p;
++    flag_bytes = (const uint8_t*)&flags2;
++    for (size_t i = 0; i < sizeof(flags2); ++i) {
++        h ^= flag_bytes[i];
+         h *= 1099511628211ULL;
+     }
+     for (size_t i = 0; i < len; i++) {
+@@ -1914,7 +1923,7 @@
+         if (sz > sizeof(header) && sz < 10 * 1024 * 1024 &&
+             ReadFile(hFile, &header, sizeof(header), &read, NULL) &&
+             read == sizeof(header) && header.magic == 0x43585352u &&
+-            header.version == 1 && header.key == h && header.reserved == 0 &&
++            header.version == 2 && header.key == h && header.reserved == 0 &&
+             header.bytecode_size == sz - sizeof(header)) {
+             ID3DBlob* blob = NULL;
+             if (SUCCEEDED(D3DCreateBlob(header.bytecode_size, &blob)) && blob) {
+@@ -1946,7 +1955,8 @@
+     /* Fallback: compile with D3DCompile */
+     ID3DBlob* blob = NULL;
+     ID3DBlob* err = NULL;
+-    HRESULT hr = D3DCompile(src, len, name, NULL, NULL, entry, target, 0, 0, &blob, &err);
++    HRESULT hr = D3DCompile(src, len, name, NULL, NULL, entry, target,
++                            flags1, flags2, &blob, &err);
+     if (out_err) *out_err = err;
+     else if (err) err->lpVtbl->Release(err);
+ 
+@@ -1954,7 +1964,7 @@
+         size_t bytes = blob->lpVtbl->GetBufferSize(blob);
+         if (filepath[0] && bytes > 0 && bytes < 10 * 1024 * 1024) {
+             header.magic = 0x43585352u; /* RSXC */
+-            header.version = 1;
++            header.version = 2;
+             header.key = h;
+             header.bytecode_size = (uint32_t)bytes;
+             header.reserved = 0;

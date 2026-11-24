@@ -1,0 +1,54 @@
+Subject: [PATCH 0019] video: retain draws queued after a clear present
+
+Only suppress a duplicate flip when there are no pending draws.
+
+--- a/libs/video/rsx_present_policy.h
++++ b/libs/video/rsx_present_policy.h
+@@ -4,9 +4,12 @@
+ static inline int rsx_present_flip_already_rendered(
+     unsigned clear_present_count,
+     unsigned last_clear_presented_flip,
+-    unsigned current_flip)
++    unsigned current_flip,
++    unsigned pending_draws)
+ {
+-    return clear_present_count != 0 &&
++    /* A clear can submit earlier work for this flip. New draws still need
++     * to be executed, even when the requested flip number is unchanged. */
++    return pending_draws == 0 && clear_present_count != 0 &&
+            last_clear_presented_flip == current_flip;
+ }
+ 
+--- a/tests/test_rsx_present_policy.c
++++ b/tests/test_rsx_present_policy.c
+@@ -14,13 +14,15 @@
+ 
+ int main(void)
+ {
+-    check(!rsx_present_flip_already_rendered(0, 0, 0),
++    check(!rsx_present_flip_already_rendered(0, 0, 0, 0),
+           "boot fallback remains active before a clear present");
+-    check(rsx_present_flip_already_rendered(1, 7, 7),
++    check(rsx_present_flip_already_rendered(1, 7, 7, 0),
+           "the flip rendered by a clear boundary is not rendered twice");
+-    check(!rsx_present_flip_already_rendered(1, 7, 8),
++    check(!rsx_present_flip_already_rendered(1, 7, 8, 0),
+           "a later guest flip resumes normal presentation");
+-    check(rsx_present_flip_already_rendered(1, 0, 0),
++    check(rsx_present_flip_already_rendered(1, 0, 0, 0),
+           "a pre-flip clear present suppresses the duplicate boot present");
++    check(!rsx_present_flip_already_rendered(1, 7, 7, 1),
++          "new draws after the clear must reach the same flip");
+     return failures ? 1 : 0;
+ }
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -8308,7 +8308,7 @@
+         extern unsigned cellGcm_flip_request_count(void);
+         if (rsx_present_flip_already_rendered(
+                 s_clear_presents, s_last_clear_presented_flip,
+-                cellGcm_flip_request_count()))
++                cellGcm_flip_request_count(), s_d3d.draw_count))
+             return;
+     }
+ 

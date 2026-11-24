@@ -1,0 +1,51 @@
+diff --git a/runtime/syscalls/lv2_register.c b/runtime/syscalls/lv2_register.c
+index b02bb34..7734b2d 100644
+--- a/runtime/syscalls/lv2_register.c
++++ b/runtime/syscalls/lv2_register.c
+@@ -976,7 +976,9 @@ static int64_t sys_spu_thread_group_start_handler(ppu_context* ctx)
+     /* Starting a group whose thread is still running is ESTAT. For a lifted
+      * thread it would run spu_lifted_thread_setup over the live context and
+      * spawn a second host thread on it. */
+-    for (uint32_t i = 0; i < g->num_threads && i < 8; i++) {
++    /* num_threads is the group's capacity, while sys_spu_thread_initialize
++     * indexes the physical SPU slot. A one-thread group may use slot 5. */
++    for (uint32_t i = 0; i < 8; i++) {
+         uint32_t idx = g->thread_indices[i];
+         if (idx < MAX_SPU_THREADS && s_spu_threads[idx].in_use &&
+             *(volatile int*)&s_spu_threads[idx].running && s_spu_threads[idx].sctx) {
+@@ -1045,7 +1047,7 @@ static int64_t sys_spu_thread_group_start_handler(ppu_context* ctx)
+     int spawned = 0;
+     int instant = 0;
+     int nofb    = 0;   /* subset of `instant` that had no fallback at all */
+-    for (uint32_t i = 0; i < g->num_threads && i < 8; i++) {
++    for (uint32_t i = 0; i < 8; i++) {
+         uint32_t idx = g->thread_indices[i];
+         if (idx >= MAX_SPU_THREADS) continue;
+         spu_thread_t* t = &s_spu_threads[idx];
+@@ -1280,7 +1282,7 @@ static int64_t sys_spu_thread_group_join_handler(ppu_context* ctx)
+      * back results. */
+     if (g->state == SPU_GROUP_STATE_RUNNING) {
+         int32_t worst = 0;
+-        for (int i = 0; i < 8 && i < (int)g->num_threads; i++) {
++        for (int i = 0; i < 8; i++) {
+             uint32_t idx = g->thread_indices[i];
+             if (idx >= MAX_SPU_THREADS) continue;
+             spu_thread_t* t = &s_spu_threads[idx];
+@@ -1371,7 +1373,7 @@ static int64_t sys_spu_thread_group_destroy_handler(ppu_context* ctx)
+         const uint64_t t0 = GetTickCount64();   /* wall time: Sleep(1) can be a 15.6 ms tick */
+         for (;;) {
+             busy = 0;
+-            for (int i = 0; i < 8 && i < (int)g->num_threads; i++) {
++            for (int i = 0; i < 8; i++) {
+                 uint32_t idx = g->thread_indices[i];
+                 if (idx < MAX_SPU_THREADS && s_spu_threads[idx].in_use &&
+                     *(volatile int*)&s_spu_threads[idx].running &&
+@@ -1388,7 +1390,7 @@ static int64_t sys_spu_thread_group_destroy_handler(ppu_context* ctx)
+             ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)CELL_EBUSY;
+             return (int64_t)ctx->gpr[3];
+         }
+-        for (int i = 0; i < 8 && i < (int)g->num_threads; i++) {
++        for (int i = 0; i < 8; i++) {
+             uint32_t idx = g->thread_indices[i];
+             if (idx < MAX_SPU_THREADS) {
+                 spu_thread_t* t = &s_spu_threads[idx];

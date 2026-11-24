@@ -1,3 +1,6 @@
+From: inFAMOUS FoB Recomp contributors
+Subject: [PATCH 0013] video: retire GPU resources safely after completed fence values
+
 --- a/libs/video/rsx_d3d12_backend.c
 +++ b/libs/video/rsx_d3d12_backend.c
 @@ -1410,59 +1410,93 @@

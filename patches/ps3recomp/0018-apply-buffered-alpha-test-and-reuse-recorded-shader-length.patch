@@ -1,0 +1,89 @@
+Subject: [PATCH 0018] video: apply buffered alpha tests to recorded draws
+
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -265,6 +265,7 @@
+     u32 unnorm_mask;        /* unnormalized textures mask (PSO key) */
+     u32 unnorm_dim[16][3];  /* unnormalized dimensions for scaling */
+     u64 zs;                 /* depth/stencil state, rsx_zs_key (PSO key) */
++    u32 alpha_func;         /* shader alpha test comparison, excluding the dynamic reference */
+     ID3D12PipelineState* pso;
+ } VPFPEntry;
+ /* Guest-FP PSO cache. 16 entries thrashed badly: this title needs far more
+@@ -2367,7 +2368,7 @@
+ 
+ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, const u8* ucode, u32 ucode_bytes, u32 off, u32 blend, int nrt,
+                                           DXGI_FORMAT rtfmt, u32 ctrl, u32 cmask, u32 cull,
+-                                          u32 cube_mask, u32 unnorm_mask, const u32 unnorm_dim[16][3], u64 zs)
++                                          u32 cube_mask, u32 unnorm_mask, const u32 unnorm_dim[16][3], u64 zs, u32 alpha_func)
+ {
+     if (nrt < 0) nrt = 0; if (nrt > 4) nrt = 4;   /* 0: a depth-only pass */
+     if (rtfmt == 0) rtfmt = DXGI_FORMAT_R8G8B8A8_UNORM;
+@@ -2390,11 +2391,13 @@
+         consts_inline = e && e[0] == '0';
+     }
+     const int buffered = !consts_inline && s_d3d.vp_fpcb_mapped;
++    if (!buffered) alpha_func = 0x0207u;
+     /* Literal mode needs the payload in the key. Buffered mode takes those
+      * values from the draw, so changing them does not require a new pipeline. */
+     u32 uhash;
+     {
+-        u32 usz = rsx_fp_program_size(ucode, ucode_bytes);
++        u32 usz = ucode_bytes < VP_FP_UCODE_BYTES ? ucode_bytes
++            : rsx_fp_program_size(ucode, ucode_bytes);
+         if (usz == 0) usz = 64;
+         s_perf_pso_hashbytes += (int)usz;
+         if (!buffered) {
+@@ -2422,6 +2425,7 @@
+             s_d3d.vp_fp[i].ucode_hash == uhash && s_d3d.vp_fp[i].cmask == cmask &&
+             s_d3d.vp_fp[i].cull == cull &&
+             s_d3d.vp_fp[i].cube_mask == cube_mask && s_d3d.vp_fp[i].zs == zs &&
++            s_d3d.vp_fp[i].alpha_func == alpha_func &&
+             s_d3d.vp_fp[i].unnorm_mask == unnorm_mask &&
+             (!unnorm_mask || memcmp(s_d3d.vp_fp[i].unnorm_dim, unnorm_dim, sizeof(s_d3d.vp_fp[i].unnorm_dim)) == 0))
+         {
+@@ -2515,6 +2519,10 @@
+         n = rsx_fp_decompile(ucode, ucode_bytes, fp_ctrl, hlsl, sizeof(hlsl));
+     }
+     if (n <= 0) { static int _e=0; if(PS3_LOG_FIRST(_e, 16)) printf("[FP] decompile fail (fp=0x%08X)\n", fp_addr); return NULL; }
++    if (rsx_fp_apply_alpha_test_buffered(hlsl, sizeof(hlsl), alpha_func) < 0) {
++        fprintf(stderr, "[FP] Could not emit alpha test for fp=0x%08X\n", fp_addr);
++        return NULL;
++    }
+     if (unnorm_mask) {
+         rsx_fp_apply_unnorm_scale(hlsl, sizeof(hlsl), unnorm_mask, (const u32 (*)[3])unnorm_dim, cube_mask, 0);
+     }
+@@ -2855,6 +2863,7 @@
+     else
+         memset(s_d3d.vp_fp[s_d3d.vp_fp_n].unnorm_dim, 0, sizeof(s_d3d.vp_fp[s_d3d.vp_fp_n].unnorm_dim));
+     s_d3d.vp_fp[s_d3d.vp_fp_n].zs      = zs;
++    s_d3d.vp_fp[s_d3d.vp_fp_n].alpha_func = alpha_func;
+     s_d3d.vp_fp[s_d3d.vp_fp_n].pso     = pso;
+     s_d3d.vp_fp_n++;
+     return pso;
+@@ -3624,6 +3633,7 @@
+             ts[17] = (float)(dr->alpha_ctl & 0xFFu) / 255.0f;
+             ts[18] = (float)((dr->alpha_ctl >> 8) & 0x07u);
+             ts[19] = 0.0f;
++            ts[VP_FP_ALPHA_SLOT * 4u] = ts[17];
+         } else {
+             ts[16] = 0.0f; ts[17] = 0.0f; ts[18] = 7.0f; ts[19] = 0.0f;
+         }
+@@ -5223,13 +5233,16 @@
+         double _ps0 = perf_on() ? perf_now() : 0.0;
+         u32 unnorm_dim[16][3];
+         u32 unnorm_mask = dr_unnorm_units(dr, unnorm_dim);
++        const u32 alpha_func = (dr->alpha_ctl & (1u << 16)) &&
++            !env_on("NO_ALPHATEST", &s_env_noalphatest) && dr_num_rts(dr) > 0
++            ? 0x0200u | ((dr->alpha_ctl >> 8) & 7u) : 0x0207u;
+         dr->prepared_pso = dr->fp_addr ? vp_get_fp_pso(dr->vs_idx, dr->fp_addr,
+                                        dr->fp_ucode, dr->fp_ucode_size, dr->fp_ucode_ea, dr->blend_key,
+                                        dr_num_rts(dr),
+                                        dr->rt_off ? rsx_surface_dxgi(dr->rt_fmt)
+                                                   : DXGI_FORMAT_R8G8B8A8_UNORM,
+                                        dr->fp_ctrl, dr->cmask, dr->cull, dr_cube_mask(dr),
+-                                       unnorm_mask, unnorm_dim, dr->zs_key) : NULL;
++                                       unnorm_mask, unnorm_dim, dr->zs_key, alpha_func) : NULL;
+         if (dr->prepared_pso) dr->prepared_pso->lpVtbl->AddRef(dr->prepared_pso);
+         if (perf_on()) s_perf_pso += perf_now() - _ps0;
+     }
