@@ -54,4 +54,8 @@ jobs:
         run: python tools/test_spu_policy_image_collision.py --sdk out/ci-sdk --cc gcc --output-dir out/ci-spu
       - name: Fila LFQueue do SPURS
         run: python out/ci-sdk/tools/test_spurs_queue_size.py
-
+      - name: Recebimento de eventos SPU em POSIX
+        run: |
+          cmake -S out/ci-sdk/tests/sync_stress -B out/ci-sync -G Ninja
+          cmake --build out/ci-sync --target test_event_queue_destroy
+          ctest --test-dir out/ci-sync -R event_queue_destroy --output-on-failure

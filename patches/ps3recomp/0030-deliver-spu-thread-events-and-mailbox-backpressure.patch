@@ -1,0 +1,319 @@
+diff --git a/runtime/syscalls/lv2_register.c b/runtime/syscalls/lv2_register.c
+index 7734b2d..f661ddb 100644
+--- a/runtime/syscalls/lv2_register.c
++++ b/runtime/syscalls/lv2_register.c
+@@ -363,6 +363,7 @@ static spu_thread_t s_spu_threads[MAX_SPU_THREADS];
+ static uint32_t     s_spu_next_group_id  = 0x1000;
+ static uint32_t     s_spu_next_thread_id = 0x2000;
+ static int          s_spu_initialized    = 0;
++static void spu_thread_unbind_all(uint32_t tid);
+ 
+ static spu_group_t* spu_find_group(uint32_t id)
+ {
+@@ -976,9 +977,7 @@ static int64_t sys_spu_thread_group_start_handler(ppu_context* ctx)
+     /* Starting a group whose thread is still running is ESTAT. For a lifted
+      * thread it would run spu_lifted_thread_setup over the live context and
+      * spawn a second host thread on it. */
+-    /* num_threads is the group's capacity, while sys_spu_thread_initialize
+-     * indexes the physical SPU slot. A one-thread group may use slot 5. */
+-    for (uint32_t i = 0; i < 8; i++) {
++    for (uint32_t i = 0; i < 8; i++) {   /* scan every slot: a title may init a thread at spu_num >= num_threads (Bink: spu_num 5 of a 1-thread group) */
+         uint32_t idx = g->thread_indices[i];
+         if (idx < MAX_SPU_THREADS && s_spu_threads[idx].in_use &&
+             *(volatile int*)&s_spu_threads[idx].running && s_spu_threads[idx].sctx) {
+@@ -1047,7 +1046,7 @@ static int64_t sys_spu_thread_group_start_handler(ppu_context* ctx)
+     int spawned = 0;
+     int instant = 0;
+     int nofb    = 0;   /* subset of `instant` that had no fallback at all */
+-    for (uint32_t i = 0; i < 8; i++) {
++    for (uint32_t i = 0; i < 8; i++) {   /* scan every slot: a title may init a thread at spu_num >= num_threads (Bink: spu_num 5 of a 1-thread group) */
+         uint32_t idx = g->thread_indices[i];
+         if (idx >= MAX_SPU_THREADS) continue;
+         spu_thread_t* t = &s_spu_threads[idx];
+@@ -1394,6 +1393,7 @@ static int64_t sys_spu_thread_group_destroy_handler(ppu_context* ctx)
+             uint32_t idx = g->thread_indices[i];
+             if (idx < MAX_SPU_THREADS) {
+                 spu_thread_t* t = &s_spu_threads[idx];
++                spu_thread_unbind_all(t->tid);
+                 if (t->local_store) {
+                     free(t->local_store);
+                     t->local_store = NULL;
+@@ -2490,6 +2490,80 @@ extern void vm_write64(uint64_t a, uint64_t v);
+ 
+ 
+ 
++/* sys_spu_thread_bind_queue(thread, equeue, spuq_num): remember which event queue an SPU
++ * thread reads for a given SPU-side queue number, so its stop 0x110
++ * (sys_spu_thread_receive_event) can find it. */
++static struct { uint32_t tid, spuq, qid; } s_spuq_bind[64];
++static SRWLOCK s_spuq_bind_lock = SRWLOCK_INIT;
++uint32_t spu_thread_bound_queue(uint32_t tid, uint32_t spuq)
++{
++    uint32_t qid = 0;
++    AcquireSRWLockShared(&s_spuq_bind_lock);
++    for (int i = 0; i < 64; i++)
++        if (s_spuq_bind[i].qid && s_spuq_bind[i].tid == tid && s_spuq_bind[i].spuq == spuq) {
++            qid = s_spuq_bind[i].qid;
++            break;
++        }
++    ReleaseSRWLockShared(&s_spuq_bind_lock);
++    return qid;
++}
++
++static void spu_thread_unbind_all(uint32_t tid)
++{
++    AcquireSRWLockExclusive(&s_spuq_bind_lock);
++    for (int i = 0; i < 64; i++)
++        if (s_spuq_bind[i].tid == tid) memset(&s_spuq_bind[i], 0, sizeof(s_spuq_bind[i]));
++    ReleaseSRWLockExclusive(&s_spuq_bind_lock);
++}
++static int64_t sys_spu_thread_bind_queue(ppu_context* ctx)
++{
++    uint32_t tid = LV2_ARG_U32(ctx, 0), qid = LV2_ARG_U32(ctx, 1), spuq = LV2_ARG_U32(ctx, 2);
++    uint32_t result = CELL_OK;
++    if (!spu_find_thread(tid)) result = CELL_ESRCH;
++    else if (!sys_event_queue_is_spu(qid)) result = CELL_EINVAL;
++
++    int slot = -1;
++    if (result == CELL_OK) {
++        AcquireSRWLockExclusive(&s_spuq_bind_lock);
++        for (int i = 0; i < 64; i++) {
++            if (s_spuq_bind[i].qid && s_spuq_bind[i].tid == tid &&
++                (s_spuq_bind[i].spuq == spuq || s_spuq_bind[i].qid == qid)) {
++                result = CELL_EBUSY;
++                break;
++            }
++            if (slot < 0 && !s_spuq_bind[i].qid) slot = i;
++        }
++        if (result == CELL_OK && slot < 0) result = CELL_EAGAIN;
++        if (result == CELL_OK) {
++            s_spuq_bind[slot].tid = tid;
++            s_spuq_bind[slot].spuq = spuq;
++            s_spuq_bind[slot].qid = qid;
++        }
++        ReleaseSRWLockExclusive(&s_spuq_bind_lock);
++    }
++    if (result == CELL_OK)
++        fprintf(stderr, "[SPU] bind_queue tid=0x%X queue=%u spuq=0x%X\n", tid, qid, spuq);
++    ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)result;
++    return (int64_t)ctx->gpr[3];
++}
++
++static int64_t sys_spu_thread_unbind_queue(ppu_context* ctx)
++{
++    const uint32_t tid = LV2_ARG_U32(ctx, 0), spuq = LV2_ARG_U32(ctx, 1);
++    uint32_t result = CELL_ESRCH;
++    AcquireSRWLockExclusive(&s_spuq_bind_lock);
++    for (int i = 0; i < 64; i++) {
++        if (s_spuq_bind[i].qid && s_spuq_bind[i].tid == tid && s_spuq_bind[i].spuq == spuq) {
++            memset(&s_spuq_bind[i], 0, sizeof(s_spuq_bind[i]));
++            result = CELL_OK;
++            break;
++        }
++    }
++    ReleaseSRWLockExclusive(&s_spuq_bind_lock);
++    ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)result;
++    return (int64_t)ctx->gpr[3];
++}
++
+ static int64_t sys_spu_thread_stub(ppu_context* ctx)
+ {
+     (void)ctx;
+@@ -2644,8 +2718,8 @@ void lv2_register_all_syscalls(lv2_syscall_table* tbl)
+     lv2_syscall_register(tbl, SYS_SPU_THREAD_SET_SPU_CFG,    sys_spu_thread_set_spu_cfg_handler);
+     lv2_syscall_register(tbl, SYS_SPU_THREAD_GET_SPU_CFG,    sys_spu_thread_get_spu_cfg_handler);
+     lv2_syscall_register(tbl, SYS_SPU_THREAD_WRITE_SPU_MB,  sys_spu_thread_write_spu_mb_handler);
+-    lv2_syscall_register(tbl, SYS_SPU_THREAD_BIND_QUEUE,      sys_spu_thread_stub);
+-    lv2_syscall_register(tbl, SYS_SPU_THREAD_UNBIND_QUEUE,    sys_spu_thread_stub);
++    lv2_syscall_register(tbl, SYS_SPU_THREAD_BIND_QUEUE,      sys_spu_thread_bind_queue);
++    lv2_syscall_register(tbl, SYS_SPU_THREAD_UNBIND_QUEUE,    sys_spu_thread_unbind_queue);
+     lv2_syscall_register(tbl, SYS_SPU_THREAD_GROUP_CONNECT_EVENT_ALL_THREADS, sys_spu_thread_group_connect_event_all_threads_handler);
+ }
+ 
+diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
+index 025364d..8b32b08 100644
+--- a/runtime/spu/spu_channels.c
++++ b/runtime/spu/spu_channels.c
+@@ -234,6 +234,24 @@ void spu_stop(spu_context* ctx)
+     static int s_halt = -1;
+     if (s_halt < 0) s_halt = getenv("YDKJ_STOP_HALT") ? 1 : 0;
+     ctx->status = SPU_STATUS_STOPPED_BY_STOP;
++    if (ctx->stop_code == 0x110u && ctx->spu_group_id && ctx->ls == ctx->ls_store) {
++        /* sys_spu_thread_receive_event: the SPU supplies a queue number in
++         * its outbound mailbox and receives status plus three event words. */
++        extern uint32_t spu_thread_bound_queue(uint32_t tid, uint32_t spuq);
++        extern int sys_event_queue_receive_host(uint32_t qid, uint64_t out[3], volatile int* stop);
++        const uint32_t spuq = ctx->ch_out_mbox.count ? spu_channel_read(&ctx->ch_out_mbox) : 0;
++        const uint32_t qid = spu_thread_bound_queue(ctx->spu_id, spuq);
++        uint64_t data[3] = {0, 0, 0};
++        const int ok = qid && sys_event_queue_receive_host(qid, data, &ctx->stop_request) == 0;
++        ctx->rcv_evt[0] = ok ? 0u : 0x80010002u; /* CELL_OK / CELL_EINVAL */
++        ctx->rcv_evt[1] = (uint32_t)data[0];
++        ctx->rcv_evt[2] = (uint32_t)data[1];
++        ctx->rcv_evt[3] = (uint32_t)data[2];
++        ctx->rcv_evt_n = ok ? 4 : 1;
++        ctx->rcv_evt_i = 0;
++        ctx->status = SPU_STATUS_RUNNING;
++        return;
++    }
+     if (s_halt) spu_halt(ctx);
+ }
+ 
+@@ -1053,7 +1071,9 @@ void spu_wrch(spu_context* ctx, uint32_t channel, u128 value)
+          * polling the MMIO window, whereas SPURS-thread mailboxes are drained
+          * by paths that do not wake a stalled writer. A raw SPU's local store
+          * is the guest window, not its own buffer. */
+-        if (ctx->ls != ctx->ls_store)
++        /* A lifted thread-group SPU also needs backpressure: the PPU reads
++         * its mailbox through sys_spu_thread_read_spu_mb. */
++        if (ctx->ls != ctx->ls_store || ctx->spu_group_id)
+             while (ctx->ch_out_mbox.count >= SPU_MBOX_DEPTH && ctx->status != SPU_STATUS_STOPPED) {
+                 spu_honour_stop_request(ctx);
+                 Sleep(0);
+diff --git a/runtime/syscalls/sys_event.c b/runtime/syscalls/sys_event.c
+index 6f72c1e..d8b29ca 100644
+--- a/runtime/syscalls/sys_event.c
++++ b/runtime/syscalls/sys_event.c
+@@ -1154,6 +1154,69 @@ int64_t sys_event_port_send(ppu_context* ctx)
+  * EVENT FLAGS
+  * ========================================================================= */
+ 
++int sys_event_queue_is_spu(uint32_t queue_id)
++{
++    if (!queue_id || queue_id > SYS_EVENT_QUEUE_MAX) return 0;
++    evt_table_lock();
++    const sys_event_queue_info* q = &g_sys_event_queues[queue_id - 1];
++    const int ok = q->active && q->type == SYS_SPU_QUEUE;
++    evt_table_unlock();
++    return ok;
++}
++
++/* Host-side blocking receive for STOP 0x110. Use the same table -> queue lock
++ * order as create/destroy, so the queue cannot be reinitialized between
++ * validation and acquiring its lock. A 50 ms timed wait observes shutdown. */
++int sys_event_queue_receive_host(uint32_t queue_id, uint64_t out[3], volatile int* stop)
++{
++    if (!out || queue_id == 0 || queue_id > SYS_EVENT_QUEUE_MAX) return -1;
++    evt_table_lock();
++    sys_event_queue_info* q = &g_sys_event_queues[queue_id - 1];
++    if (!q->active || q->type != SYS_SPU_QUEUE) {
++        evt_table_unlock();
++        return -1;
++    }
++#ifdef _WIN32
++    EnterCriticalSection(&q->lock);
++#else
++    pthread_mutex_lock(&q->lock);
++#endif
++    evt_table_unlock();
++
++    q->waiters++;
++    while (!q->count && q->active && !q->cancelled && !(stop && *stop)) {
++#ifdef _WIN32
++        SleepConditionVariableCS(&q->not_empty, &q->lock, 50);
++#else
++        struct timespec deadline;
++        clock_gettime(CLOCK_REALTIME, &deadline);
++        deadline.tv_nsec += 50000000L;
++        if (deadline.tv_nsec >= 1000000000L) {
++            deadline.tv_sec++;
++            deadline.tv_nsec -= 1000000000L;
++        }
++        pthread_cond_timedwait(&q->not_empty, &q->lock, &deadline);
++#endif
++    }
++
++    const int ok = q->active && !q->cancelled && !(stop && *stop) && q->count > 0;
++    if (ok) {
++        const sys_event_t evt = q->buffer[q->head];
++        q->head = (q->head + 1) % q->capacity;
++        q->count--;
++        out[0] = evt.data1;
++        out[1] = evt.data2;
++        out[2] = evt.data3;
++    }
++    q->waiters--;
++#ifdef _WIN32
++    LeaveCriticalSection(&q->lock);
++#else
++    pthread_mutex_unlock(&q->lock);
++#endif
++    return ok ? 0 : -1;
++}
++
+ int64_t sys_event_flag_create(ppu_context* ctx);
+ 
+ /* An event flag the runtime makes for a guest object (no attribute block),
+diff --git a/runtime/syscalls/sys_event.h b/runtime/syscalls/sys_event.h
+index 1407bd7..59bc0d5 100644
+--- a/runtime/syscalls/sys_event.h
++++ b/runtime/syscalls/sys_event.h
+@@ -175,6 +175,10 @@ uint32_t sys_event_find_queue_by_key(uint64_t key);
+  * game a queue id, e.g. cellAudioCreateNotifyEventQueue). 0 = table full. */
+ uint32_t sys_event_queue_create_direct(uint64_t key, int32_t size);
+ 
++/* SPU thread queue binding and blocking receive (STOP 0x110). */
++int sys_event_queue_is_spu(uint32_t queue_id);
++int sys_event_queue_receive_host(uint32_t queue_id, uint64_t out[3], volatile int* stop);
++
+ /* Mark a queue as having no producer left and release anyone blocked on it.
+  * Used by cellSpursFinalize: after it, no job completion can ever arrive, and
+  * a worker parked on the completion queue with an infinite timeout would never
+diff --git a/tests/sync_stress/test_event_queue_destroy.c b/tests/sync_stress/test_event_queue_destroy.c
+index 3c30175..4399d97 100644
+--- a/tests/sync_stress/test_event_queue_destroy.c
++++ b/tests/sync_stress/test_event_queue_destroy.c
+@@ -183,12 +183,53 @@ static void test_timed_receive(void)
+     CHECK_RC(call(sys_event_queue_destroy, 1, q, 0, 0, 0), CELL_OK);
+ }
+ 
++typedef struct host_recv {
++    uint32_t q;
++    uint64_t data[3];
++    volatile int stop;
++    int rc;
++    HANDLE h;
++} host_recv_t;
++static DWORD WINAPI host_recv_main(void* p)
++{
++    host_recv_t* r = (host_recv_t*)p;
++    r->rc = sys_event_queue_receive_host(r->q, r->data, &r->stop);
++    return 0;
++}
++static void test_spu_host_receive(void)
++{
++    const uint32_t attr = 0x220;
++    memset(vm_base + attr, 0, 16);
++    vm_base[attr + 7] = SYS_SPU_QUEUE; /* big-endian attr.type */
++    CHECK_RC(call(sys_event_queue_create, 1, 0x200, attr, 0x72647035, 8), CELL_OK);
++    const uint32_t q = be_read(0x200);
++    CHECK(sys_event_queue_is_spu(q));
++
++    host_recv_t r = {0};
++    r.q = q; r.rc = -2;
++    r.h = CreateThread(NULL, 0, host_recv_main, &r, 0, NULL);
++    wait_waiters(q, 1);
++    CHECK(sys_event_queue_push_by_id(q, 0x99, 0x11, 0x22, 0x33) == 0);
++    WaitForSingleObject(r.h, 5000); CloseHandle(r.h);
++    CHECK(r.rc == 0 && r.data[0] == 0x11 && r.data[1] == 0x22 && r.data[2] == 0x33);
++
++    memset(&r, 0, sizeof(r));
++    r.q = q; r.rc = -2;
++    r.h = CreateThread(NULL, 0, host_recv_main, &r, 0, NULL);
++    wait_waiters(q, 1);
++    CHECK_RC(call(sys_event_queue_destroy, 1, q, SYS_EVENT_QUEUE_DESTROY_FORCE, 0, 0), CELL_OK);
++    WaitForSingleObject(r.h, 5000); CloseHandle(r.h);
++    CHECK(r.rc == -1);
++    CHECK(!sys_event_queue_is_spu(q));
++}
++
+ int main(void)
+ {
+     vm_base = (uint8_t*)calloc(1, 65536);
+     if (!vm_base) return 2;
+     test_destroy_modes();
+     test_timed_receive();
++    test_spu_host_receive();
+     printf("event queue destroy / timed receive: %s\n", failures ? "FAIL" : "PASS");
+     return failures ? 1 : 0;
+ }
