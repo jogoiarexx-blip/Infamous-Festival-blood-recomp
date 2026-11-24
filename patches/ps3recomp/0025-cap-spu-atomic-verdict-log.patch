@@ -16,4 +16,3 @@ diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
                fprintf(stderr, "[atom-ea] PUTLLC %s lr=0x%05X ea=0x%08X\n",
                        ctx->atomic_stat ? "FAIL" : "OK",
                        ctx->gpr[0]._u32[0] & SPU_LS_MASK, ea); }
-
