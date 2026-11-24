@@ -1,3 +1,68 @@
+diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
+--- a/libs/video/cellGcmSys.c
++++ b/libs/video/cellGcmSys.c
+@@ -99,12 +99,30 @@
+  * a fixed 16ms clock, and a drain that catches the guest mid-frame -- e.g.
+  * while it's blocked in the FIFO-wrap recycle callback -- would show a
+  * clear+few-draws frame as a visible flicker). */
+-static volatile u32 s_flip_request_count = 0;
+-
++/* Requests can arrive from the guest and the FIFO drain while the present
++ * thread reads this count. Volatile does not make increments atomic. The
++ * counter carries no frame data, so relaxed ordering is sufficient. */
++#ifdef _WIN32
++static volatile LONG s_flip_request_count = 0;
++static void gcm_count_flip_request(void)
++{
++    InterlockedIncrement(&s_flip_request_count);
++}
+ u32 cellGcm_flip_request_count(void)
+ {
+-    return s_flip_request_count;
+-}
++    return (u32)InterlockedCompareExchange(&s_flip_request_count, 0, 0);
++}
++#else
++static u32 s_flip_request_count = 0;
++static void gcm_count_flip_request(void)
++{
++    __atomic_fetch_add(&s_flip_request_count, 1u, __ATOMIC_RELAXED);
++}
++u32 cellGcm_flip_request_count(void)
++{
++    return __atomic_load_n(&s_flip_request_count, __ATOMIC_RELAXED);
++}
++#endif
+ static u32  s_debug_level = CELL_GCM_DEBUG_LEVEL0;
+ 
+ /* Display buffers */
+@@ -2589,7 +2607,7 @@
+                  * guest-visible half of the request. */
+                 gcm_set_current_display_buffer(w & 7u);
+                 s_flip_pending = 1;
+-                s_flip_request_count++;
++                gcm_count_flip_request();
+                 /* Not past `queued`: a resync may already have written off
+                  * this flip. */
+                 if (s_fifo_flips_reached != s_fifo_flips_queued) s_fifo_flips_reached++;
+@@ -3478,7 +3496,7 @@
+     if (!in_fifo) {
+         gcm_set_current_display_buffer(bufferId);
+         s_flip_pending = 1;   /* ticker: present BEFORE the next drain */
+-        s_flip_request_count++;
++        gcm_count_flip_request();
+         s_flip_direct_pending = 1;
+     }
+     /* Flip requested but not yet shown: a subsequent cellGcmSetWaitFlip blocks
+@@ -3594,7 +3612,7 @@
+ 
+     gcm_set_current_display_buffer(bufferId);
+     s_flip_status = CELL_GCM_FLIP_STATUS_DONE;
+-    s_flip_request_count++;
++    gcm_count_flip_request();
+     s_last_flip_time = get_timestamp_ns();
+ 
+     /* Invoke the guest flip handler via OPD resolution -- s_flip_handler holds
 diff --git a/libs/video/rsx_d3d12_backend.c b/libs/video/rsx_d3d12_backend.c
 --- a/libs/video/rsx_d3d12_backend.c
 +++ b/libs/video/rsx_d3d12_backend.c
@@ -68,4 +133,45 @@ diff --git a/libs/video/rsx_d3d12_backend.c b/libs/video/rsx_d3d12_backend.c
              s_tt0 = tnow;
          }
      }
-
+diff --git a/libs/video/tests/test_gcm_flip_stream.c b/libs/video/tests/test_gcm_flip_stream.c
+--- a/libs/video/tests/test_gcm_flip_stream.c
++++ b/libs/video/tests/test_gcm_flip_stream.c
+@@ -80,6 +80,9 @@
+ /* cellGcmSys asks whether a vtable backend is registered (#466). */
+ rsx_backend* rsx_get_backend(void) { return NULL; }
+ void rsx_draw_engine_note_flip(u32 buffer_id) { (void)buffer_id; }
++void rsx_draw_engine_set_display_buffer(u32 id, u32 location, u32 offset,
++                                        u32 pitch, u32 width, u32 height)
++{ (void)id; (void)location; (void)offset; (void)pitch; (void)width; (void)height; }
+ void rsx_draw_engine_guest_read(u32 l, u32 o, u32 p, u32 w, u32 h) { (void)l; (void)o; (void)p; (void)w; (void)h; }
+ void rsx_draw_engine_guest_wrote(u32 l, u32 o, u32 p, u32 w, u32 h) { (void)l; (void)o; (void)p; (void)w; (void)h; }
+ int  rsx_live_draw_enabled(void) { return 0; }
+@@ -160,6 +163,8 @@
+     check(vm_read32(buf + 16) == (GCM_FLIP_MARKER | 1u), "then the flip");
+     check(vm_read32(ctx + 8) == buf + 20, "current is past the flip");
+     check(vm_read32(label_ea) == 0, "the label itself is not written by the PPU");
++    check(cellGcm_flip_request_count() == 0,
++          "a queued flip is not counted before the FIFO reaches it");
+ 
+     /* 2 */
+     cellGcm_request_tick();
+@@ -171,6 +176,8 @@
+     vm_write32(GCM_CONTROL_GUEST_ADDR + 0, io + 20);
+     cellGcm_rsx_process_fifo();
+     check(s_fifo_getoff == io + 20, "the drain consumed the wait and the flip");
++    check(cellGcm_flip_request_count() == 1,
++          "the FIFO marker counts exactly one guest flip request");
+     cellGcm_request_tick();
+     p = GCM_PENDING_TAKE();
+     check((p & 1) && (p & 2), "the next tick completes the flip");
+@@ -226,7 +233,10 @@
+     check(p & 2, "which completes it");
+ 
+     /* 7 */
++    const u32 count_before_direct = cellGcm_flip_request_count();
+     check(cellGcmSetFlipCommand(1) == CELL_OK, "a flip outside the stream is accepted");
++    check(cellGcm_flip_request_count() == count_before_direct + 1u,
++          "a direct flip counts exactly one guest flip request");
+     cellGcm_request_tick();
+     p = GCM_PENDING_TAKE();
+     check(p & 2, "it completes on the next beat");
