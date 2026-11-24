@@ -1,7 +1,7 @@
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
-@@ -1994,6 +1995,24 @@ static __attribute__((noinline)) void barrier_watch_hit_slow(uint32_t a, uint32_
+@@ -1994,6 +1994,24 @@ static __attribute__((noinline)) void barrier_watch_hit_slow(uint32_t a, uint32_
                      ppu_guard_page(a); }
              } }
  
@@ -26,7 +26,7 @@ diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
            /* PPU_WWATCH_MAX=<n>: how many hits to print (default 64, 0 = unlimited).
             *
             * The cap used to be a bare 64 with no announcement, and silence
-@@ -2031,6 +2050,7 @@ static __attribute__((noinline)) void barrier_watch_hit_slow(uint32_t a, uint32_
+@@ -2031,6 +2049,7 @@ static __attribute__((noinline)) void barrier_watch_hit_slow(uint32_t a, uint32_
                fflush(stderr);
            }
        } }
@@ -34,4 +34,3 @@ diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
      uint32_t b = g_barrier_sync_watch;
      if (!b) return;
      if (a >= b + 0x40 && a < b + 0xC0) {
-
