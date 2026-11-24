@@ -52,4 +52,6 @@ jobs:
         run: python tools/test_fp_program_lifetime.py --sdk out/ci-sdk --cc gcc --output-dir out/ci-fp-lifetime
       - name: Regressão SPU com instruções sintéticas
         run: python tools/test_spu_policy_image_collision.py --sdk out/ci-sdk --cc gcc --output-dir out/ci-spu
+      - name: Fila LFQueue do SPURS
+        run: python out/ci-sdk/tools/test_spurs_queue_size.py
 
