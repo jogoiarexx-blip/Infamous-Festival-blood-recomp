@@ -1,0 +1,155 @@
+From: jogoiarexx-blip <jogoiarexx@gmail.com>
+Subject: [PATCH 0032] spu: adopt a verified WWS module only on a full image match
+
+A DMA list never presents the registered source address as one transfer,
+so a lifted WWS module stayed in the interpreter. Several modules share
+a 16-byte prologue; claiming the first prefix and then rejecting the
+slot stopped the search. Match the whole registered image before keeping
+the slot, and try that claim once per interpreter entry.
+
+On the launcher build the settled 3D scene stayed about 9.3 render fps
+and 4.7 flip requests per second, the same band as about 9.0 fps and
+4.5 flips/s before this change.
+
+---diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
+index 382f606..3922677 100644
+--- a/runtime/spu/spu_channels.c
++++ b/runtime/spu/spu_channels.c
+@@ -2064,6 +2064,12 @@ static int spu_overlay_resident_verified(spu_context* ctx, unsigned slot)
+         for (unsigned i = 0; match && i < o->code_count; ++i)
+             match = !memcmp(ctx->ls + o->code[i].lsa, o->code[i].bytes, o->code[i].size);
+         *state = match ? SPU_OVERLAY_VERIFIED : SPU_OVERLAY_REJECTED;
++        if (*state == SPU_OVERLAY_REJECTED) {
++            static int _rej = 0;
++            if (PS3_LOG_FIRST(_rej, 8))
++                fprintf(stderr, "[spu-ovl] verified region image %d rejected at LS 0x%05X\n",
++                        o->image_id, ctx->resident_code[slot].lsa);
++        }
+     }
+     return *state == SPU_OVERLAY_VERIFIED;
+ }
+@@ -2309,6 +2315,92 @@ void spu_overlay_note_get(spu_context* ctx, uint32_t ea, const uint8_t* ls, uint
+     }
+ }
+ 
++/* 64 bytes at the start plus the last 16. Several WWS modules share a short
++ * prologue, and one of them matched 16 bytes while the body was a different
++ * module; claiming it and then refusing the slot blocked every later image. */
++static int spu_overlay_sample_ok(const spu_context* ctx, const spu_ovl_src* o)
++{
++    const spu_overlay_code_segment* c = &o->code[0];
++    if (!c->bytes || c->size < 16 || c->lsa > SPU_LS_SIZE - c->size) return 0;
++    uint32_t n = c->size < 64u ? c->size : 64u;
++    if (memcmp(ctx->ls + c->lsa, c->bytes, n) != 0) return 0;
++    if (c->size >= 32u &&
++        memcmp(ctx->ls + c->lsa + c->size - 16u, c->bytes + c->size - 16u, 16) != 0)
++        return 0;
++    return 1;
++}
++
++static int spu_overlay_full_ok(const spu_context* ctx, const spu_ovl_src* o)
++{
++    for (unsigned i = 0; i < o->code_count; ++i) {
++        const spu_overlay_code_segment* c = &o->code[i];
++        if (!c->bytes || !c->size || c->lsa > SPU_LS_SIZE - c->size) return 0;
++        if (memcmp(ctx->ls + c->lsa, c->bytes, c->size) != 0) return 0;
++    }
++    return 1;
++}
++
++/* A WWS job list copies a module into the code buffer in pieces. note_get only
++ * claims a verified region when one transfer's EA is the registered source and
++ * its local address is the region's load base, so a list that starts at the
++ * code (or a copy of the module) never claims it and the whole body stays in
++ * the interpreter. At the branch into that body, the bytes are already there:
++ * claim the verified region whose span contains this PC and whose code matches
++ * in full. A rejected candidate must not stop the search, and must not keep
++ * the slot. Returns the image id, or 0. */
++int spu_overlay_adopt_loaded(spu_context* ctx)
++{
++    const uint32_t pc = ctx->pc & SPU_LS_MASK;
++    const int nsrc = __atomic_load_n(&s_ovl_src_count, __ATOMIC_ACQUIRE);
++    for (unsigned slot = 0; slot < 4; ++slot) {
++        const int id = ctx->resident_code[slot].image_id;
++        const int st = ctx->resident_code[slot].verify_state;
++        if (!id || st != SPU_OVERLAY_VERIFIED || pc < ctx->resident_code[slot].lsa ||
++            pc - ctx->resident_code[slot].lsa >= ctx->resident_code[slot].size)
++            continue;
++        int idx = ctx->resident_code[slot].source_index;
++        if (idx < 0 || idx >= nsrc) continue;
++        const spu_ovl_src* o = &s_ovl_src[idx];
++        if (o->image_id == id && o->code && o->code_count && spu_overlay_sample_ok(ctx, o))
++            return id;
++    }
++    for (int i = 0; i < nsrc; i++) {
++        const spu_ovl_src* o = &s_ovl_src[i];
++        if (!o->code || !o->code_count || !o->span || pc < o->load_lsa ||
++            pc - o->load_lsa >= o->span)
++            continue;
++        if (!spu_overlay_sample_ok(ctx, o) || !spu_overlay_full_ok(ctx, o)) continue;
++        int slot = -1;
++        for (unsigned s = 0; s < 4; ++s) {
++            int same = ctx->resident_code[s].image_id == o->image_id &&
++                       ctx->resident_code[s].lsa == o->load_lsa;
++            if (same || !ctx->resident_code[s].image_id) { slot = (int)s; break; }
++        }
++        if (slot < 0) {
++            for (unsigned s = 0; s < 4; ++s) {
++                if (ctx->resident_code[s].lsa == o->load_lsa ||
++                    ctx->resident_code[s].verify_state == SPU_OVERLAY_REJECTED) {
++                    slot = (int)s; break;
++                }
++            }
++        }
++        if (slot < 0) slot = 0;
++        ctx->resident_code[slot].lsa = o->load_lsa;
++        ctx->resident_code[slot].size = o->span;
++        ctx->resident_code[slot].source_ea = o->src_ea;
++        ctx->resident_code[slot].image_id = o->image_id;
++        ctx->resident_code[slot].verify_state = SPU_OVERLAY_VERIFIED;
++        ctx->resident_code[slot].source_index = i;
++        ctx->resident_code[slot].canon = o->canon;
++        spu_dcache_residency_changed(ctx);
++        { static int _n = 0; if (PS3_LOG_FIRST(_n, 16))
++            fprintf(stderr, "[spu-ovl] WWS code at LS 0x%05X matches verified image %d\n",
++                    pc, o->image_id); }
++        return o->image_id;
++    }
++    return 0;
++}
++
+ /* Match a 16-byte module header against the registered content signatures.
+  * Returns the overlay image id, or 0 if none. Used by the WWS job-code dispatch
+  * path: the job manager streams a module into the code buffer via a DMA LIST
+@@ -3027,6 +3119,14 @@ void spu_indirect_branch(spu_context* ctx)
+                 fn = spu_lookup(ctx->pc, img);
+             }
+         }
++        /* Verified engine modules share this buffer but are keyed by source EA,
++         * which a DMA list does not present as one transfer. Claim by the bytes
++         * already in local store, then resolve through the resident span so a
++         * mismatched image cannot run. */
++        if (!fn) {
++            int img = spu_overlay_adopt_loaded(ctx);
++            if (img) fn = spu_lifted_lookup(ctx, ctx->pc);
++        }
+     }
+     /* A policy-module miss does not identify a job image. Image ids belong
+      * to each port's registry: image 1 can be an unrelated task whose code
+diff --git a/runtime/spu/spu_interp.c b/runtime/spu/spu_interp.c
+index 6d63141..2251f34 100644
+--- a/runtime/spu/spu_interp.c
++++ b/runtime/spu/spu_interp.c
+@@ -446,6 +446,12 @@ uint32_t spu_interp_run_until(spu_context* ctx, uint32_t start_lsa, uint32_t sto
+     }
+     ctx->pc = start_lsa & 0x3FFFC;
+     ctx->status = SPU_STATUS_RUNNING;
++    /* Claim a verified WWS module once per entry. The loop returns when
++     * the PC lands on a lifted function entry. */
++    if (ctx->image_id == 2 && ctx->pc >= 0x4000u && ctx->pc < 0x3E000u) {
++        extern int spu_overlay_adopt_loaded(spu_context*);
++        spu_overlay_adopt_loaded(ctx);
++    }
+     uint64_t steps = 0;
+     /* YDKJ_SPU_TRACE=N: log the last N PCs into a ring buffer and dump them when the
+      * interp halts -- shows the path to a branch-to-0 (the cri task/policy wall). */

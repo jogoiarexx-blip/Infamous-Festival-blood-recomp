@@ -163,7 +163,7 @@
 ## CHECKPOINT 6 — PRs E PUBLICAÇÃO
 
 - **Status:** **CONCLUÍDO**
-- **Organização Linear de Patches em `patches/ps3recomp/` (0001 a 0031):**
+- **Organização Linear de Patches em `patches/ps3recomp/` (0001 a 0032):**
   - `0011-spurs-preserve-explicit-job-completion-events.patch` (PR #7)
   - `0012-gcm-composite-offscreen-render-target.patch` (PR #9)
   - `0013-retire-gpu-resources-after-completed-fences.patch` (PR #11 renumerada de 0012)
@@ -184,3 +184,4 @@
   - `0029-scan-occupied-spu-group-slots.patch` (Escaneamento seguro de slots dispersos em grupos SPU)
   - `0030-deliver-spu-thread-events-and-mailbox-backpressure.patch` (Entrega bloqueante de eventos para threads SPU e backpressure na mailbox)
   - `0031-enable-avx2-fma-runtime-vectorization.patch` (Sondagem e ativação de flags `-mavx2` e `-mfma` acelerando vetores de 256 bits nas 49 imagens SPU)
+  - `0032-adopt-verified-wws-image-on-full-match.patch` (Aceita um módulo WWS já traduzido só quando a imagem inteira confere. Cena 3D assentada no launcher: cerca de 9,3 quadros/s e 4,7 trocas/s, sem ganho sobre os cerca de 9,0 quadros/s e 4,5 trocas/s anteriores)
