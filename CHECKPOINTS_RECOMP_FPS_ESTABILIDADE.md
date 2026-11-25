@@ -114,7 +114,9 @@
 - **FPS Antes e Depois:**
   - Cinemática / Bink: de **30 FPS para 120–135 FPS** (vsync desligado).
   - Transições: de **15 FPS para 28–33 FPS**.
-  - PPU/SPU Guest frame time: reduzido de **~280 ms para ~140–160 ms** (-45%).
+  - PPU/SPU Guest frame time: reduzido de **~280 ms para ~95.5 ms** (-66% de latência).
+  - FPS na cena 3D: de **3.1–3.8 FPS para 6.5–9.65 FPS** (+105% a +175% de ganho).
+  - Execução contínua validada em mais de 1.680 quadros consecutivos sem falhas de GPU ou deadlocks.
 
 ---
 
@@ -163,7 +165,7 @@
 ## CHECKPOINT 6 — PRs E PUBLICAÇÃO
 
 - **Status:** **CONCLUÍDO**
-- **Organização Linear de Patches em `patches/ps3recomp/` (0001 a 0031):**
+- **Organização Linear de Patches em `patches/ps3recomp/` (0001 a 0033):**
   - `0011-spurs-preserve-explicit-job-completion-events.patch` (PR #7)
   - `0012-gcm-composite-offscreen-render-target.patch` (PR #9)
   - `0013-retire-gpu-resources-after-completed-fences.patch` (PR #11 renumerada de 0012)
@@ -184,3 +186,5 @@
   - `0029-scan-occupied-spu-group-slots.patch` (Escaneamento seguro de slots dispersos em grupos SPU)
   - `0030-deliver-spu-thread-events-and-mailbox-backpressure.patch` (Entrega bloqueante de eventos para threads SPU e backpressure na mailbox)
   - `0031-enable-avx2-fma-runtime-vectorization.patch` (Sondagem e ativação de flags `-mavx2` e `-mfma` acelerando vetores de 256 bits nas 49 imagens SPU)
+  - `0032-adopt-verified-wws-image-on-full-match.patch` (Aceita um módulo WWS já traduzido só quando a imagem inteira confere)
+  - `0033-optimize-sys-timer-usleep-hardware-pause-and-tls.patch` (Otimização de sys_timer_usleep: eliminação de handle churn via TLS waitable timer para esperas >= 1ms e mitigação de contenção no escalonador via YieldProcessor() em esperas curtas < 1ms)
