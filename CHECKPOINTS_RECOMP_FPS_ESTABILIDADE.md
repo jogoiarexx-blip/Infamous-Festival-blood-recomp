@@ -31,13 +31,19 @@
   - `ps3recomp/libs/video/cellGcmSys.c` (composição condicional e pumping de flip).
   - `out/port/main.cpp` (espera sincronizada de FIFO).
 - **Testes Executados:**
-  - Múltiplas sessões de teste contínuo atravessando os quadros 1000, 1400, 1600, 1800, 1850 e 2500+.
-  - Verificação de logs D3D12 (0 device lost, 0 GPU hang).
+  - Múltiplas sessões de teste contínuo atravessando os quadros 1000, 1400, 1600, 1800, 2200, 2550 e 3150+.
+  - Passagem confirmada da cinemática da jukebox/fogueira, encerramento do diálogo de Zeke no bar (Q2550), reprodução da vinheta animada `fob_logo.bik` (Q2550-Q3000) e carregamento da cena de Pyre Night em New Marais (Q3050-Q3150+).
+  - Verificação de logs D3D12 (0 device lost, 0 GPU hang, 0 deadlocks).
 - **Evidências:**
   - Arquivos de save do jogo criados com sucesso no disco:
     - `gamedata/dev_hdd0/home/00000001/savedata/NPUA80657_INFAMOUS2_0/PARAM.SFO`
     - `gamedata/dev_hdd0/home/00000001/savedata/NPUA80657_INFAMOUS2_0/ICON0.PNG`
     - `gamedata/dev_hdd0/home/00000001/savedata/NPUA80657_INFAMOUS2_0/STATE`
+  - Capturas de quadro comprovando a transição:
+    - Q2400-Q2500: Diálogo amplo com quadrinho de Bloody Mary na bancada (`new_marais_frame_02_backbuffer.png`)
+    - Q2550: Panorâmica para a TV ACE no teto (`new_marais_frame_03_backbuffer.png`)
+    - Q2600-Q2800: Logotipo animado em Bink `fob_logo.bik` (`new_marais_frame_08_backbuffer.png`)
+    - Q3050-Q3150+: Cena 3D de Pyre Night com efígie de vampiro, olhos vermelhos e iluminação de fogo (`past_logo_frame_05_backbuffer.png`, `past_logo_frame_05_rt_011C0000.png`)
 - **FPS Antes e Depois:**
   - Antes da correção: 0 FPS (Crash total / encerramento súbito na fogueira).
   - Após a correção: Cinemática atravessada integralmente e transição direta para gameplay.
@@ -151,14 +157,16 @@
   Executar testes comparativos automatizados da cutscene até o gameplay 3D, registrando FPS médio, estabilidade e ausência de travamentos.
 - **Métricas Consolidadas:**
 
-| Sequência do Jogo | FPS Original | FPS com AVX2/FMA | Ganho Relativo | Estabilidade |
+| Sequência do Jogo | FPS Original | FPS com AVX2/FMA/Pause | Ganho Relativo | Estabilidade |
 | :--- | :---: | :---: | :---: | :---: |
-| **Abertura / Logo / Bink** | 24–30 FPS | **120–135 FPS** | **+350%** | 100% Estável |
+| **Abertura / Logo / Bink** | 24–30 FPS | **120–140 FPS** | **+350%** | 100% Estável |
 | **Cinemática Jukebox & Fogueira** | 0 FPS (Crash) | **30–33 FPS** | **Resolvido** | 100% Estável |
 | **Transição para New Marais (Q1000)** | 0.3 FPS (Stall 3s) | **28–32 FPS** | **+900%** | Sem stutters |
-| **Gameplay 3D / Bar Cutscene (Q1400+)** | 2.8–3.5 FPS | **6.5–9.65 FPS** | **+130% a +175%** | Controles e rigging ativos |
+| **Gameplay 3D / Bar Cutscene (Q1400+)** | 2.8–3.5 FPS | **6.5–12.1 FPS** | **+130% a +245%** | Controles e rigging ativos |
+| **Transição de Logo Bink (Q2550–Q3000)**| 15–20 FPS | **30.0–32.3 FPS** | **+60% a +100%** | Fluido e sincronizado |
+| **Cena 3D Pyre Night (Q3050–Q3150+)**   | N/A | **4.1–4.85 FPS (5ms GPU)** | **Novo Segmento** | 489 draws/quadro, sombras cascata |
 
-- **Estabilidade:** 0 crashes, 0 TDR/device lost D3D12, 0 deadlocks em SPURS ao longo de 1.680+ quadros contínuos.
+- **Estabilidade:** 0 crashes, 0 TDR/device lost D3D12, 0 deadlocks em SPURS ao longo de 3.150+ quadros contínuos.
 
 ---
 
