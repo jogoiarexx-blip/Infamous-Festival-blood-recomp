@@ -1,6 +1,6 @@
 # inFAMOUS: Festival of Blood — recompilação para PC
 
-> **Estado da edição NPUA80657:** a recompilação renderiza o aviso inicial e reproduz o vídeo de abertura Bink em cores no teste local. Depois do vídeo, o menu ainda não aparece.
+> **Estado da edição NPUA80657:** a build local passa do vídeo e chega a uma cena 3D. O patch 0034, numa corrida sem sonda, ficou em cerca de 12 fps de render. A imagem não foi conferida e não houve três corridas pareadas. Isso não torna o jogo jogável.
 
 Projeto comunitário e não oficial para estudar a viabilidade de uma recompilação estática de **inFAMOUS: Festival of Blood** (PlayStation 3) para PC, com base no ecossistema [ps3recomp](https://github.com/sp00nznet/ps3recomp).
 
@@ -18,6 +18,7 @@ Projeto comunitário e não oficial para estudar a viabilidade de uma recompila�
 
 - O código PPU e SPU foi recompilado localmente a partir dos arquivos do jogo.
 - As correções de sincronização, vídeo e diagnóstico do SPU estão nos [patches do ps3recomp](patches/ps3recomp/).
+- O patch 0034 liga, em AVX2, a soma, a multiplicação e o FMA de precisão simples com arredondamento para zero, e tira as inversões extras do shufb em SSE4.1. Aplica-se depois de 0001–0033. A medição e o que ainda não foi conferido estão em [CODEX_DESEMPENHO_RECOMP.md](CODEX_DESEMPENHO_RECOMP.md).
 - O [rastreio do vídeo NPUA80657](docs/BINK-VIDEO-NPUA80657.md) documenta a transição após o splash e como aplicar os patches.
 
 ## Começar (Windows, Python 3.10+)
