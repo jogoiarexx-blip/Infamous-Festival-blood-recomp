@@ -1,0 +1,406 @@
+From: jogoiarexx-blip <jogoiarexx@gmail.com>
+Subject: [PATCH 0034] spu: native round-toward-zero singles on AVX2
+
+Ordinary normal lanes of fa, fs, fm, fma, fms and fnms use one native
+single-precision operation while MXCSR rounds toward zero. Denormals,
+infinities, NaNs and the max finite stay on the exact lane. Flush-to-zero
+and denormals-are-zero stay off. The mode is held only for spu_run_with_halt,
+and the case-2 longjmp reapplies the rounding bits. SSE4.1 shufb keeps host
+lane order instead of reversing the quadword on the way in and out.
+
+The differential test covers the native path. It is not a graphics check
+and not a three-run frame-time pair.
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -371,6 +371,13 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+     if(PS3RECOMP_HAS_MFMA)
+         target_compile_options(ps3recomp_runtime PUBLIC -mfma)
+     endif()
++    # spu_run_with_halt holds MXCSR at round toward zero. The interpreter runs
++    # on that same thread, so its single-precision helpers must take the native
++    # path too. Tests that compile this file themselves do not get the macro.
++    if(PS3RECOMP_HAS_MAVX2)
++        set_source_files_properties(runtime/spu/spu_interp.c PROPERTIES
++            COMPILE_DEFINITIONS "SPU_FPU_HW_RZ;SPU_FPU_HW_RZ_CHECK")
++    endif()
+ elseif(MSVC)
+     # Real cl.exe -- clang-cl reports its id as Clang and is handled above.
+     #
+diff --git a/templates/project/CMakeLists.txt b/templates/project/CMakeLists.txt
+--- a/templates/project/CMakeLists.txt
++++ b/templates/project/CMakeLists.txt
+@@ -186,13 +186,16 @@ add_executable(${PROJECT_NAME}
+ # changes the compile command of every lifted PPU TU, and those are large enough
+ # that the needless rebuild is measured in tens of minutes.
+ #   SPU_USE_DISPATCH_MT -- route SPU_IB_DISPATCH through the musttail path.
++#   SPU_FPU_HW_RZ       -- native round-toward-zero singles while a lifted run
++#                          holds MXCSR in that mode. The exact body stays for a
++#                          run that did not set the mode.
+ #   -O2                 -- the target-wide -O1 exists for the huge PPU TUs; the
+ #                          SPU sources are small and decode-hot, so they get
+ #                          full optimization. The last -O on the line wins.
+ if(SPU_SOURCES)
+     set_source_files_properties(${SPU_SOURCES} PROPERTIES
+         INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu"
+-        COMPILE_DEFINITIONS SPU_USE_DISPATCH_MT)
++        COMPILE_DEFINITIONS "SPU_USE_DISPATCH_MT;SPU_FPU_HW_RZ")
+     if(NOT MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+         set_source_files_properties(${SPU_SOURCES} PROPERTIES COMPILE_OPTIONS "-O2")
+     endif()
+diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
+--- a/runtime/spu/spu_channels.c
++++ b/runtime/spu/spu_channels.c
+@@ -255,13 +255,19 @@ void spu_stop(spu_context* ctx)
+     if (s_halt) spu_halt(ctx);
+ }
+ 
+-/* SPU_FLOAT_RZ=1: SPU code runs with FPCR at round toward zero with flush-to-zero, so the
+- * single-precision helpers take their native form (spu_helpers.h, spu__nv_rz). The mode is set
+- * on entry to spu_run_with_halt and the caller's FPCR is put back on the way out: a run can
+- * happen synchronously on a PPU thread (a workload dispatched from the PPU caller), whose
+- * lifted floating point must keep round to nearest with denormals. Double precision restores
+- * the default around itself inside a run. arm64 only; elsewhere the exact forms always run.
+- * Returns the FPCR to restore, or ~0 when nothing was changed. */
++/* SPU_FLOAT_RZ=1 on arm64: SPU code runs with FPCR at round toward zero with flush-to-zero,
++ * so the single-precision helpers take their native form (spu_helpers.h, spu__nv_rz).
++ * On AVX2 the same bracket sets MXCSR to round toward zero and raises g_spu_fpu_rz, with
++ * flush-to-zero left off. Lifted code compiled with SPU_FPU_HW_RZ then uses one native
++ * single op; a lane outside the normal range still takes the exact fix. The caller's mode
++ * is put back on the way out: a run can happen synchronously on a PPU thread, whose own
++ * floating point must keep round to nearest with denormals. Double precision restores
++ * round to nearest around itself inside a run. Returns the mode to restore, or ~0 when
++ * nothing was changed. */
++#if defined(__AVX2__) && !defined(SPU_SCALAR_HELPERS)
++SPU_THREAD_LOCAL int g_spu_fpu_rz = 0;
++static SPU_THREAD_LOCAL unsigned s_spu_fpu_mxcsr;
++#endif
+ static uint64_t spu_float_mode_enter(void)
+ {
+ #if defined(__aarch64__) && defined(__ARM_NEON) && !defined(SPU_SCALAR_HELPERS)
+@@ -278,6 +284,18 @@ static uint64_t spu_float_mode_enter(void)
+     if (v == SPU_FPCR_RZFZ) return ~0ull;   /* nested run: the outer one restores */
+     __asm__ volatile("msr fpcr, %0" :: "r"((uint64_t)SPU_FPCR_RZFZ));
+     return v;
++#elif defined(__AVX2__) && !defined(SPU_SCALAR_HELPERS)
++    /* Same contract as the arm64 path, on MXCSR: round toward zero for the
++     * whole run, so lifted code can use one native single-precision op.
++     * Flush-to-zero stays off; a denormal result takes the exact lane.
++     * Nested run: the outer enter restores. Set the mode before the flag so
++     * a helper never sees the fast path under round-to-nearest. */
++    if (g_spu_fpu_rz) return ~0ull;
++    unsigned old = (unsigned)_mm_getcsr();
++    _mm_setcsr((old & ~0x6000u) | 0x6000u);
++    s_spu_fpu_mxcsr = old;
++    g_spu_fpu_rz = 1;
++    return old;
+ #else
+     return ~0ull;
+ #endif
+@@ -286,6 +304,11 @@ static void spu_float_mode_leave(uint64_t outer)
+ {
+ #if defined(__aarch64__) && defined(__ARM_NEON) && !defined(SPU_SCALAR_HELPERS)
+     if (outer != ~0ull) __asm__ volatile("msr fpcr, %0" :: "r"(outer));
++#elif defined(__AVX2__) && !defined(SPU_SCALAR_HELPERS)
++    if (outer == ~0ull) return;
++    g_spu_fpu_rz = 0;
++    _mm_setcsr((unsigned)outer);
++    (void)s_spu_fpu_mxcsr;
+ #else
+     (void)outer;
+ #endif
+@@ -355,7 +378,20 @@ int spu_run_with_halt(void (*entry)(spu_context*), spu_context* ctx)
+         break;
+     case 2:
+         /* A one-way guest stack reset invalidates every lifted host caller.
+-         * Re-enter its target with the same guest state on the driver stack. */
++         * Re-enter its target with the same guest state on the driver stack.
++         * On this CRT, longjmp reloads the MXCSR saved at setjmp, and that
++         * still happens when Frame is zero. setjmp is taken after enter has
++         * set round-toward-zero, so a jump out of a double op (which puts
++         * nearest back for itself) comes back in toward-zero. Force those
++         * two bits again in case a jump does not reload them: the fast path
++         * stays selected for the rest of the run. Sticky flags and FTZ/DAZ
++         * are left as the jump restored them. */
++#if defined(__AVX2__) && !defined(SPU_SCALAR_HELPERS)
++        if (g_spu_fpu_rz) {
++            unsigned cur = (unsigned)_mm_getcsr();
++            _mm_setcsr((cur & ~0x6000u) | 0x6000u);
++        }
++#endif
+         ctx->host_depth = 0;
+         g_spu_trampoline_fn = 0;
+         spu_indirect_branch(ctx);
+diff --git a/runtime/spu/spu_helpers.h b/runtime/spu/spu_helpers.h
+--- a/runtime/spu/spu_helpers.h
++++ b/runtime/spu/spu_helpers.h
+@@ -463,14 +463,12 @@ static inline u128 spu_selb(u128 a, u128 b, u128 c) { return spu_selb_ref(a, b,
+  *   otherwise           -> concat{a,b}[sel & 0x1F] */
+ #if defined(__SSE4_1__)
+ #include <smmintrin.h>
+-/* pshufb version: one of the hottest SPU ops (~11% of GH3's FMOD mixer task
+- * as the byte loop). SPU byte P lives at host byte SPU_W(P), i.e. the bytes
+- * of each 32-bit word reversed, so swap into SPU order, select, swap back. */
++/* pshufb version. Host lane h already holds SPU byte h^3, and the control
++ * for that same result byte sits in lane h, so the quadword is not reversed
++ * on the way in or out. Source SPU byte p lives at host lane p^3. */
+ static inline u128 spu_shufb(u128 a, u128 b, u128 c) {
+-    const __m128i sw = _mm_setr_epi8(3,2,1,0, 7,6,5,4, 11,10,9,8, 15,14,13,12);
+     __m128i A, B, C; memcpy(&A, &a, 16); memcpy(&B, &b, 16); memcpy(&C, &c, 16);
+-    A = _mm_shuffle_epi8(A, sw); B = _mm_shuffle_epi8(B, sw); C = _mm_shuffle_epi8(C, sw);
+-    const __m128i idx = _mm_and_si128(C, _mm_set1_epi8(0x0F));
++    const __m128i idx = _mm_xor_si128(_mm_and_si128(C, _mm_set1_epi8(0x0F)), _mm_set1_epi8(3));
+     const __m128i fromb = _mm_cmpeq_epi8(_mm_and_si128(C, _mm_set1_epi8(0x10)), _mm_set1_epi8(0x10));
+     __m128i r = _mm_blendv_epi8(_mm_shuffle_epi8(A, idx), _mm_shuffle_epi8(B, idx), fromb);
+     /* Special selectors: 10x -> 0x00, 110 -> 0xFF, 111 -> 0x80. */
+@@ -478,7 +476,7 @@ static inline u128 spu_shufb(u128 a, u128 b, u128 c) {
+     const __m128i mC0 = _mm_cmpeq_epi8(_mm_and_si128(C, _mm_set1_epi8((char)0xC0)), _mm_set1_epi8((char)0xC0));
+     const __m128i mE0 = _mm_cmpeq_epi8(_mm_and_si128(C, _mm_set1_epi8((char)0xE0)), _mm_set1_epi8((char)0xE0));
+     const __m128i special = _mm_blendv_epi8(mC0, _mm_set1_epi8((char)0x80), mE0);
+-    r = _mm_shuffle_epi8(_mm_blendv_epi8(r, special, m80), sw);
++    r = _mm_blendv_epi8(r, special, m80);
+     u128 out; memcpy(&out, &r, 16); return out;
+ }
+ #elif defined(__ARM_NEON)
+@@ -1094,6 +1092,108 @@ SPU__X8_SLOW u128 spu__x8_fma_fix(u128 r, __m128i ok, u128 a, u128 b, u128 c, ui
+     for (int i = 0; i < 4; i++) if (!(m >> i & 1)) r._u32[i] = spu__fma_any(a._u32[i], b._u32[i], c._u32[i], negp, negc);
+     return r;
+ }
++#if defined(SPU_FPU_HW_RZ)
++/* Set by spu_float_mode_enter for the whole of spu_run_with_halt: MXCSR round-toward-zero.
++ * A normal result of a native single op then matches the SPU truncation; anything else
++ * (extended range, a denormal, or a saturated max finite) is redone by the exact lane. */
++extern SPU_THREAD_LOCAL int g_spu_fpu_rz;
++SPU__X8_INLINE __m128i spu__x8_rz_keep(__m128i pre, __m128i ri) {
++    /* Same lanes as the exponent tests: a zero, or a normal below the max
++     * finite. Denormals, inf/NaN, and 0x7F7FFFFF stay on the exact lane.
++     * One unsigned span does that. 0x7EFFFFFE is 0x7F7FFFFE - 0x00800000. */
++    const __m128i abs = _mm_and_si128(ri, _mm_set1_epi32(0x7FFFFFFF));
++    const __m128i span = _mm_sub_epi32(abs, _mm_set1_epi32(0x00800000));
++    const __m128i in = _mm_cmpeq_epi32(_mm_min_epu32(span, _mm_set1_epi32(0x7EFFFFFE)), span);
++    return _mm_and_si128(pre, _mm_or_si128(in, _mm_cmpeq_epi32(abs, _mm_setzero_si128())));
++}
++SPU__X8_INLINE __m128i spu__x8_rz_bits(__m128 r) {
++    __m128i ri = _mm_castps_si128(r);
++    const __m128i zm = _mm_cmpeq_epi32(_mm_slli_epi32(ri, 1), _mm_setzero_si128());
++    return _mm_andnot_si128(_mm_and_si128(zm, _mm_set1_epi32((int)0x80000000)), ri);
++}
++SPU__X8_INLINE u128 spu__x8_fa_rz(u128 a, u128 b, uint32_t negb) {
++    const __m128i x = spu__x8_ld(a), y = _mm_xor_si128(spu__x8_ld(b), _mm_set1_epi32((int)negb));
++    const __m128i pre = _mm_and_si128(spu__x8_plain0(x), spu__x8_plain0(y));
++    const __m128i ri = spu__x8_rz_bits(_mm_add_ps(_mm_castsi128_ps(x), _mm_castsi128_ps(y)));
++    const __m128i ok = spu__x8_rz_keep(pre, ri);
++    return spu__x8_all4(ok) ? spu__x8_st(ri) : spu__x8_fa_fix(spu__x8_st(ri), ok, a, b, negb);
++}
++SPU__X8_INLINE u128 spu__x8_fm_rz(u128 a, u128 b) {
++    const __m128i x = spu__x8_ld(a), y = spu__x8_ld(b);
++    const __m128i pre = _mm_and_si128(spu__x8_plain0(x), spu__x8_plain0(y));
++    const __m128i ri = spu__x8_rz_bits(_mm_mul_ps(_mm_castsi128_ps(x), _mm_castsi128_ps(y)));
++    const __m128i ok = spu__x8_rz_keep(pre, ri);
++    return spu__x8_all4(ok) ? spu__x8_st(ri) : spu__x8_fm_fix(spu__x8_st(ri), ok, a, b);
++}
++SPU__X8_INLINE u128 spu__x8_fma_rz(u128 a, u128 b, u128 c, uint32_t negp, uint32_t negc) {
++    const __m128i x = _mm_xor_si128(spu__x8_ld(a), _mm_set1_epi32((int)negp));
++    const __m128i y = spu__x8_ld(b);
++    const __m128i z = _mm_xor_si128(spu__x8_ld(c), _mm_set1_epi32((int)negc));
++    const __m128i pre = _mm_and_si128(_mm_and_si128(spu__x8_plain0(x), spu__x8_plain0(y)), spu__x8_plain0(z));
++    const __m128i ri = spu__x8_rz_bits(_mm_fmadd_ps(_mm_castsi128_ps(x), _mm_castsi128_ps(y), _mm_castsi128_ps(z)));
++    const __m128i ok = spu__x8_rz_keep(pre, ri);
++    return spu__x8_all4(ok) ? spu__x8_st(ri) : spu__x8_fma_fix(spu__x8_st(ri), ok, a, b, c, negp, negc);
++}
++#endif
++#if defined(SPU_FPU_HW_RZ)
++/* The exact double body stays out of line. Inlined next to the short path it
++ * doubles the hot kernel and the extra code is never taken while the flag is set. */
++SPU__X8_SLOW u128 spu__x8_fa_rn(u128 a, u128 b, uint32_t negb) {
++    const __m128i x = spu__x8_ld(a), y = _mm_xor_si128(spu__x8_ld(b), _mm_set1_epi32((int)negb));
++    const __m128i gap = _mm_cmpgt_epi32(_mm_set1_epi32(30), _mm_abs_epi32(_mm_sub_epi32(spu__x8_bexp(x), spu__x8_bexp(y))));
++    const __m128i pre = _mm_and_si128(_mm_and_si128(spu__x8_plain0(x), spu__x8_plain0(y)),
++                                      _mm_or_si128(gap, _mm_or_si128(spu__x8_zero(x), spu__x8_zero(y))));
++    __m128i ok, zm;
++    const __m128i r = spu__x8_trunc0(_mm256_add_pd(spu__x8_wide(x), spu__x8_wide(y)), &ok, &zm, NULL);
++    ok = _mm_and_si128(ok, pre);
++    return spu__x8_all4(ok) ? spu__x8_st(r) : spu__x8_fa_fix(spu__x8_st(r), ok, a, b, negb);
++}
++SPU__X8_SLOW u128 spu__x8_fm_rn(u128 a, u128 b) {
++    const __m128i x = spu__x8_ld(a), y = spu__x8_ld(b);
++    __m128i ok, zm;
++    const __m128i r = spu__x8_trunc0(_mm256_mul_pd(spu__x8_wide(x), spu__x8_wide(y)), &ok, &zm, NULL);
++    ok = _mm_and_si128(ok, _mm_and_si128(spu__x8_plain0(x), spu__x8_plain0(y)));
++    return spu__x8_all4(ok) ? spu__x8_st(r) : spu__x8_fm_fix(spu__x8_st(r), ok, a, b);
++}
++SPU__X8_SLOW u128 spu__x8_fma_rn(u128 a, u128 b, u128 c, uint32_t negp, uint32_t negc) {
++    const __m128i x = _mm_xor_si128(spu__x8_ld(a), _mm_set1_epi32((int)negp)), y = spu__x8_ld(b);
++    const __m128i z = _mm_xor_si128(spu__x8_ld(c), _mm_set1_epi32((int)negc));
++    const __m256d p = _mm256_mul_pd(spu__x8_wide(x), spu__x8_wide(y)), zz = spu__x8_wide(z);
++    const __m256d sum = _mm256_add_pd(p, zz), bb = _mm256_sub_pd(sum, p);
++    const __m256d err = _mm256_add_pd(_mm256_sub_pd(p, _mm256_sub_pd(sum, bb)), _mm256_sub_pd(zz, bb));
++    __m128i ok, zm;
++    const __m128i r = spu__x8_trunc0(sum, &ok, &zm, &err);
++    ok = _mm_and_si128(ok, _mm_and_si128(_mm_and_si128(spu__x8_plain0(x), spu__x8_plain0(y)), spu__x8_plain0(z)));
++    return spu__x8_all4(ok) ? spu__x8_st(r) : spu__x8_fma_fix(spu__x8_st(r), ok, a, b, c, negp, negc);
++}
++/* Generated code only runs inside spu_run_with_halt, which already set the mode,
++ * so it does not retest the flag on every op. The interpreter also runs outside
++ * a lifted run: it defines SPU_FPU_HW_RZ_CHECK and keeps the exact body for that. */
++SPU__X8_INLINE u128 spu__x8_fa(u128 a, u128 b, uint32_t negb) {
++#if defined(SPU_FPU_HW_RZ_CHECK)
++    if (__builtin_expect(g_spu_fpu_rz, 1)) return spu__x8_fa_rz(a, b, negb);
++    return spu__x8_fa_rn(a, b, negb);
++#else
++    return spu__x8_fa_rz(a, b, negb);
++#endif
++}
++SPU__X8_INLINE u128 spu_fm(u128 a, u128 b) {
++#if defined(SPU_FPU_HW_RZ_CHECK)
++    if (__builtin_expect(g_spu_fpu_rz, 1)) return spu__x8_fm_rz(a, b);
++    return spu__x8_fm_rn(a, b);
++#else
++    return spu__x8_fm_rz(a, b);
++#endif
++}
++SPU__X8_INLINE u128 spu__x8_fma(u128 a, u128 b, u128 c, uint32_t negp, uint32_t negc) {
++#if defined(SPU_FPU_HW_RZ_CHECK)
++    if (__builtin_expect(g_spu_fpu_rz, 1)) return spu__x8_fma_rz(a, b, c, negp, negc);
++    return spu__x8_fma_rn(a, b, c, negp, negc);
++#else
++    return spu__x8_fma_rz(a, b, c, negp, negc);
++#endif
++}
++#else
+ SPU__X8_INLINE u128 spu__x8_fa(u128 a, u128 b, uint32_t negb) {
+     const __m128i x = spu__x8_ld(a), y = _mm_xor_si128(spu__x8_ld(b), _mm_set1_epi32((int)negb));
+     /* the exponent-gap limit applies only between two nonzero terms */
+@@ -1105,8 +1205,6 @@ SPU__X8_INLINE u128 spu__x8_fa(u128 a, u128 b, uint32_t negb) {
+     ok = _mm_and_si128(ok, pre);
+     return spu__x8_all4(ok) ? spu__x8_st(r) : spu__x8_fa_fix(spu__x8_st(r), ok, a, b, negb);
+ }
+-SPU__X8_INLINE u128 spu_fa(u128 a, u128 b) { return spu__x8_fa(a, b, 0); }
+-SPU__X8_INLINE u128 spu_fs(u128 a, u128 b) { return spu__x8_fa(a, b, 0x80000000u); }
+ SPU__X8_INLINE u128 spu_fm(u128 a, u128 b) {
+     const __m128i x = spu__x8_ld(a), y = spu__x8_ld(b);
+     __m128i ok, zm;
+@@ -1126,6 +1224,9 @@ SPU__X8_INLINE u128 spu__x8_fma(u128 a, u128 b, u128 c, uint32_t negp, uint32_t
+     ok = _mm_and_si128(ok, _mm_and_si128(_mm_and_si128(spu__x8_plain0(x), spu__x8_plain0(y)), spu__x8_plain0(z)));
+     return spu__x8_all4(ok) ? spu__x8_st(r) : spu__x8_fma_fix(spu__x8_st(r), ok, a, b, c, negp, negc);
+ }
++#endif
++SPU__X8_INLINE u128 spu_fa(u128 a, u128 b) { return spu__x8_fa(a, b, 0); }
++SPU__X8_INLINE u128 spu_fs(u128 a, u128 b) { return spu__x8_fa(a, b, 0x80000000u); }
+ SPU__X8_INLINE u128 spu_fma(u128 a, u128 b, u128 c)  { return spu__x8_fma(a, b, c, 0, 0); }            /* a*b + c */
+ SPU__X8_INLINE u128 spu_fms(u128 a, u128 b, u128 c)  { return spu__x8_fma(a, b, c, 0, 0x80000000u); }  /* a*b - c */
+ SPU__X8_INLINE u128 spu_fnms(u128 a, u128 b, u128 c) { return spu__x8_fma(a, b, c, 0x80000000u, 0); }  /* c - a*b */
+@@ -1485,6 +1586,25 @@ static inline void spu__fpcr_put(uint64_t v) { __asm__ volatile("msr fpcr, %0" :
+     if (__builtin_expect(m == 0, 1)) return f##_h_(a, b, c); \
+     spu__fpcr_put(0); __asm__ volatile("" : "+m"(a), "+m"(b), "+m"(c)); u128 r = f##_h_(a, b, c); \
+     __asm__ volatile("" : "+m"(r)); spu__fpcr_put(m); return r; }
++#elif defined(__AVX2__) && !defined(SPU_SCALAR_HELPERS)
++/* Same contract as the arm64 wrappers, on MXCSR. Round toward zero is set for a
++ * whole lifted run; these ops are IEEE round to nearest, so they put the
++ * rounding field back for the op and restore it after. Bits 13-14 already 0
++ * (the usual nearest mode) skips the writes. */
++static inline unsigned spu__mxcsr_now(void) { return (unsigned)_mm_getcsr(); }
++static inline void spu__mxcsr_put(unsigned v) { _mm_setcsr(v); }
++#define SPU__DP_RN1(f) static inline u128 f(u128 a) { const unsigned m = spu__mxcsr_now(); \
++    if (__builtin_expect((m & 0x6000u) == 0, 1)) return f##_h_(a); \
++    spu__mxcsr_put(m & ~0x6000u); __asm__ volatile("" : "+m"(a)); u128 r = f##_h_(a); \
++    __asm__ volatile("" : "+m"(r)); spu__mxcsr_put(m); return r; }
++#define SPU__DP_RN2(f) static inline u128 f(u128 a, u128 b) { const unsigned m = spu__mxcsr_now(); \
++    if (__builtin_expect((m & 0x6000u) == 0, 1)) return f##_h_(a, b); \
++    spu__mxcsr_put(m & ~0x6000u); __asm__ volatile("" : "+m"(a), "+m"(b)); u128 r = f##_h_(a, b); \
++    __asm__ volatile("" : "+m"(r)); spu__mxcsr_put(m); return r; }
++#define SPU__DP_RN3(f) static inline u128 f(u128 a, u128 b, u128 c) { const unsigned m = spu__mxcsr_now(); \
++    if (__builtin_expect((m & 0x6000u) == 0, 1)) return f##_h_(a, b, c); \
++    spu__mxcsr_put(m & ~0x6000u); __asm__ volatile("" : "+m"(a), "+m"(b), "+m"(c)); u128 r = f##_h_(a, b, c); \
++    __asm__ volatile("" : "+m"(r)); spu__mxcsr_put(m); return r; }
+ #else
+ #define SPU__DP_RN1(f) static inline u128 f(u128 a) { return f##_h_(a); }
+ #define SPU__DP_RN2(f) static inline u128 f(u128 a, u128 b) { return f##_h_(a, b); }
+diff --git a/runtime/spu/tests/test_spu_float_exact.c b/runtime/spu/tests/test_spu_float_exact.c
+--- a/runtime/spu/tests/test_spu_float_exact.c
++++ b/runtime/spu/tests/test_spu_float_exact.c
+@@ -203,9 +203,77 @@ static long dp_under_rz(long n)
+ }
+ #endif
+ 
++#if defined(__AVX2__) && !defined(SPU_SCALAR_HELPERS)
++static unsigned mxcsr_get(void) { return (unsigned)_mm_getcsr(); }
++static void mxcsr_set(unsigned v) { _mm_setcsr(v); }
++/* Doubles and frds are round-to-nearest. Under MXCSR round-toward-zero they must still match
++ * the nearest-mode answer, and the rounding field must be back to toward-zero afterwards.
++ * FTZ (bit 15) and DAZ (bit 6) stay as the caller left them. */
++static long dp_under_rz_x86(long n)
++{
++    long bad = 0;
++    const unsigned rz = mxcsr_get();
++    const unsigned rn = rz & ~0x6000u;
++    for (long it = 0; it < n; it++) {
++        u128 a, b, c;
++        for (int k = 0; k < 4; k++) {
++            a._u32[k] = rnd32(); b._u32[k] = rnd32(); c._u32[k] = rnd32();
++            if (it & 1) a._u32[k & ~1] &= 0x800FFFFFu;
++            if (it & 2) b._u32[k & ~1] = (b._u32[k & ~1] & 0x800FFFFFu) | 0x3FF00000u;
++        }
++        u128 want[12], got[12];
++        mxcsr_set(rn);
++        want[0] = spu_dfa(a, b); want[1] = spu_dfs(a, b); want[2] = spu_dfm(a, b);
++        want[3] = spu_dfma(a, b, c); want[4] = spu_dfms(a, b, c); want[5] = spu_dfnms(a, b, c);
++        want[6] = spu_dfnma(a, b, c); want[7] = spu_frds(a); want[8] = spu_dfceq(a, b);
++        want[9] = spu_dfcmeq(a, b); want[10] = spu_dfcgt(a, b); want[11] = spu_dfcmgt(a, b);
++        mxcsr_set(rz);
++        got[0] = spu_dfa(a, b); got[1] = spu_dfs(a, b); got[2] = spu_dfm(a, b);
++        got[3] = spu_dfma(a, b, c); got[4] = spu_dfms(a, b, c); got[5] = spu_dfnms(a, b, c);
++        got[6] = spu_dfnma(a, b, c); got[7] = spu_frds(a); got[8] = spu_dfceq(a, b);
++        got[9] = spu_dfcmeq(a, b); got[10] = spu_dfcgt(a, b); got[11] = spu_dfcmgt(a, b);
++        const unsigned after = mxcsr_get();
++        if ((after & 0x6000u) != 0x6000u || (after & ~0x6000u) != (rz & ~0x6000u)) bad++;
++        for (int k = 0; k < 12; k++) bad += memcmp(&want[k], &got[k], 16) != 0;
++    }
++    mxcsr_set(rz);
++    return bad;
++}
++#endif
++
+ int main(int argc, char** argv)
+ {
+     const long scale = argc > 1 ? atol(argv[1]) : 1;
++#if defined(SPU_FPU_HW_RZ) && defined(__AVX2__) && !defined(SPU_SCALAR_HELPERS)
++    /* The native single path is only valid while MXCSR rounds toward zero.
++     * Flush-to-zero and denormals-are-zero stay off: a denormal result is not
++     * the SPU answer and has to take the exact lane. */
++    const unsigned outer = mxcsr_get();
++    const unsigned rz = (outer & ~0x6000u) | 0x6000u;
++    mxcsr_set(rz);
++    int rc = all_passes(scale, "mxcsr round toward zero, FTZ/DAZ unchanged");
++    const unsigned mid = mxcsr_get();
++    /* Bits 0-5 are sticky status (invalid, denormal, overflow, underflow,
++     * precision). The class matrix raises them. Bits 6-15 are the mode:
++     * DAZ, masks, rounding, FTZ. Only a mode change is a failure. */
++    if ((mid & ~0x3Fu) != (rz & ~0x3Fu)) {
++        printf("test_spu_float_exact: MXCSR control drifted outer=%08X rz=%08X mid=%08X\n",
++               outer, rz, mid);
++        rc |= 1;
++    } else if ((mid & 0x3Fu) != (rz & 0x3Fu)) {
++        printf("test_spu_float_exact: MXCSR status flags mid=%08X (rounding still toward zero, FTZ/DAZ unchanged)\n",
++               mid);
++    }
++    const long dbad = dp_under_rz_x86(200000L);
++    printf("test_spu_float_exact: double precision under MXCSR RZ: %ld mismatches\n", dbad);
++    rc |= dbad != 0;
++    mxcsr_set(outer);
++    if (mxcsr_get() != outer) {
++        printf("test_spu_float_exact: MXCSR not restored (%08X -> %08X)\n", outer, mxcsr_get());
++        rc |= 1;
++    }
++    return rc;
++#else
+     int rc = all_passes(scale, "default (round to nearest)");
+ #if defined(__aarch64__) && defined(__ARM_NEON) && !defined(SPU_SCALAR_HELPERS)
+     /* SPU_FLOAT_RZ: the same passes on a thread running round toward zero with flush-to-zero,
+@@ -218,4 +286,5 @@ int main(int argc, char** argv)
+     rc |= dbad != 0;
+ #endif
+     return rc;
++#endif
+ }
