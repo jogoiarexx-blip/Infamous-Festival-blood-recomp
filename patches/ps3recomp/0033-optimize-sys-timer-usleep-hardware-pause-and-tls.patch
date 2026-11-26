@@ -1,0 +1,71 @@
+From: Antigravity <antigravity@google.com>
+Subject: [PATCH 0033] timer: optimize sys_timer_usleep with hardware pause and TLS timer handle
+
+Eliminate kernel timer creation/destruction handle churn by using a
+thread-local waitable timer handle for usec >= 1000. For sub-millisecond
+sleeps, execute hardware pause cycles (YieldProcessor) before yielding
+(SwitchToThread) to prevent severe scheduler context-switching thrashing
+in high-frequency guest spin-polling loops.
+
+---
+ runtime/syscalls/sys_timer.c | 24 +++++++++++++++---------
+ 1 file changed, 15 insertions(+), 9 deletions(-)
+
+diff --git a/runtime/syscalls/sys_timer.c b/runtime/syscalls/sys_timer.c
+index 3a022815..70b880bf 100644
+--- a/runtime/syscalls/sys_timer.c
++++ b/runtime/syscalls/sys_timer.c
+@@ -244,15 +244,16 @@ int64_t sys_timer_usleep(ppu_context* ctx)
+         ppu_log_host_chain("usleep1ms"); } }
+ 
+ #ifdef _WIN32
+-    /* Use high-resolution sleep via waitable timer for better precision */
++    /* Use high-resolution sleep via thread-local waitable timer for better precision and zero handle churn */
+     if (usec >= 1000) {
+-        HANDLE timer = CreateWaitableTimerW(NULL, TRUE, NULL);
+-        if (timer) {
++        static __declspec(thread) HANDLE s_tls_timer = NULL;
++        if (!s_tls_timer)
++            s_tls_timer = CreateWaitableTimerW(NULL, TRUE, NULL);
++        if (s_tls_timer) {
+             LARGE_INTEGER due;
+             due.QuadPart = -((LONGLONG)usec * 10); /* 100ns units, negative = relative */
+-            SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE);
+-            WaitForSingleObject(timer, INFINITE);
+-            CloseHandle(timer);
++            SetWaitableTimer(s_tls_timer, &due, 0, NULL, NULL, FALSE);
++            WaitForSingleObject(s_tls_timer, INFINITE);
+         } else {
+             Sleep((DWORD)(usec / 1000));
+         }
+@@ -262,18 +263,23 @@ int64_t sys_timer_usleep(ppu_context* ctx)
+          * on accurate microsecond pacing -- a short usleep() spin waiting on
+          * another thread to make progress otherwise collapses to a single yield
+          * and busy-spins at full speed (so the wait is effectively a no-op).
+-         * Busy-wait to a precise QPC deadline, yielding inside the spin
+-         * (SwitchToThread) so a sibling host thread the guest may be waiting on
+-         * still gets the core. Mirrors RPCS3's "Usleep Only" TSC busy-tail. */
++         * Busy-wait to a precise QPC deadline with hardware pause cycles
++         * (YieldProcessor) before yielding (SwitchToThread) to prevent massive
++         * scheduler context switch storms on tight microsecond loops.
++         * Mirrors RPCS3's "Usleep Only" TSC busy-tail. */
+         ensure_qpc_init();
+         LARGE_INTEGER qpc_start, qpc_now;
+         QueryPerformanceCounter(&qpc_start);
+         const int64_t qpc_deadline = qpc_start.QuadPart +
+             (int64_t)((usec * (uint64_t)s_qpc_freq.QuadPart) / 1000000ULL);
+-        do {
++        for (;;) {
++            for (int p = 0; p < 8; p++) YieldProcessor();
++            QueryPerformanceCounter(&qpc_now);
++            if (qpc_now.QuadPart >= qpc_deadline) break;
+             SwitchToThread();
+             QueryPerformanceCounter(&qpc_now);
+-        } while (qpc_now.QuadPart < qpc_deadline);
++            if (qpc_now.QuadPart >= qpc_deadline) break;
++        }
+     }
+ #else
+     if (usec > 0) {
+-- 
+2.43.0

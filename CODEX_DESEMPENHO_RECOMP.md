@@ -82,4 +82,49 @@ O commit paralelo do patch 0031 ativa AVX2/FMA com base no suporte do compilador
 Uma segunda execução da mesma build até 0030, desta vez sem `PS3_FTRACE` e com `RSX_PRESENT_TRACE=1`, registrou os índices de flip e as submissões D3D12. Nos índices 1000–1080, houve 81 valores distintos de flip e **162 submissões `Present` bem-sucedidas: exatamente duas para cada índice**. A primeira submissão de cada índice ficou separada da seguinte por mediana de 297,0 ms nos índices 1000–1040; nos índices 1040–1080, a mediana subiu para 563,0 ms. A segunda submissão do mesmo índice ocorreu após mediana de 94 ms. A contagem de draws nas duas submissões variou e aumentou na cena; não é seguro tratar a segunda como duplicata descartável. `Present` bem-sucedido confirma envio à API, não exibição física nem quadro de simulação novo. Essa execução também tem custo de logging e cena variável; as janelas não são um A/B controlado.
 
 
-A análise focal da rotina recompilada confirmou que a mudança de `objeto+0x318` para os estados 2, 3 e 4 é feita pela thread PPU que conduz as tarefas leves (`0x0036B128`). Na fase 2, ela consulta um sinal de conclusão por meio da rotina `0x00582DC4`, que lê um campo de 16 bits em `objeto+0x100`, além de consultar contadores de jobs. Uma execução até o flip 1100 com sonda de DMA no endereço concreto de `+0x318` não registrou escrita SPU nesse campo. A próxima coleta deve rastrear o produtor do sinal em `+0x100` e os contadores consultados pela PPU; alterar apenas o laço de espera de `+0x318` não acelera a conclusão real dos jobs.
+A análise focal da rotina recompilada confirmou que a mudança de `objeto+0x318` para os estados 2, 3 e 4 é feita pela thread PPU que conduz as tarefas leves (`0x0036B128`). A fase 2 não consulta `0x00582DC4` nem o meio-palavra em `objeto+0x100`; esse caminho é só o estado 3. Uma execução até o flip 1100 com sonda de DMA no endereço concreto de `+0x318` não registrou escrita SPU nesse campo. O laço de espera de `+0x318` permanece como está.
+
+
+## Medição de 25/11/2026 — contenção do workload SpuLight
+
+Executável do lançador: `Infamous-Festival-blood-recomp-main\out\build\MyGameRecomp.exe` (25/11/2026 12:38, 213291520 bytes), com `SPURS_LT_MEASURE=1`. Esta execução carrega a sonda e não é comparação de velocidade com os cerca de 9 fps medidos sem ela.
+
+O workload da tarefa de luz é `Wws_Job/SpuLight`, wid 2, instância SPURS `0x00A8F680`, `maxContention` 1. Na cena 3D estável, oito janelas de cerca de 4 s (32,344 s no total), com 84.463 e depois 86.770 chamadas de textura, cerca de 7,6 a 8,9 fps de render, guest cerca de 93% e `render_frame` cerca de 7%. Entre o flip 1010 (43.828 ms) e o flip 1090 (64.313 ms) houve cerca de 3,9 pedidos de flip por segundo.
+
+Nesse intervalo a contenção do wid 2 ficou diferente de zero por 27.510 ms, 85% do tempo de parede. Foram 9.424 spans, média de 2,9 ms, máximo de 207 ms. O módulo de política que ocupa esse tempo é a imagem SPU 2: 27.390 ms somados em 9.424 execuções, praticamente o mesmo tempo de parede, como esperado com um único SPU. `ctx->image_id` no fim de cada execução continuou 2. A imagem residente no overlay, contada por execução e não por tempo, foi a 215 em 7.613 das 9.424 execuções.
+
+Nas mesmas janelas, `cellSpursGetWorkloadInfo` desse wid foi chamado 2.956 vezes: 2.202 com contenção diferente de zero e `readyCount` 0, 754 com os dois em zero, e nenhuma com `readyCount` diferente de zero. O retorno da fase 2 (`0x003A9C3C` / `0x003A9C5C`) não chegou a essa consulta; a checagem das pistas devolve antes. O laço de `+0x318` não foi encurtado.
+
+## Medição de 25/11/2026 — passos do interpretador na corrida SpuLight
+
+A mesma sonda, agora contando passos do interpretador só dentro da corrida do wid 2. Continua desligada sem `SPURS_LT_MEASURE=1`. Esta execução também não serve de comparação com os cerca de 9 fps.
+
+O pad parou numa cena estável mais pesada que a amostra anterior: oito janelas de 4 s, render cerca de 4,1 a 4,5 fps, guest cerca de 97%, `render_frame` cerca de 3%, chamadas de textura paradas em 63.550. Não é o mesmo enquadramento dos 84 mil a 86 mil.
+
+Nessas janelas a corrida da luz ocupou 29.017 ms de 32.000 ms (91%). A média do span fechado foi 2 ms e o máximo de cada janela ficou entre 188 e 231 ms. O máximo antigo de 4,7 s é da travada de carga, fora dessas janelas.
+
+O interpretador fez 121.098 passos nesses 32 s. 86.928 foram no corpo da política (endereço local abaixo de 0x4000), todos na página 0x800. 34.170 foram no buffer do módulo de trabalho. A entrada que mais apareceu foi 0xA68, 43.464 vezes, sempre com 2 passos. Esse endereço é o store no meio do laço lifted `fob_policy_spu_func_00000A60`, que reescreve código e volta para a entrada 0xA60. Dois passos por vez, contra 29 s de corrida, não explicam o frame. O tempo está no código já compilado da imagem 2, com o módulo 215 residente na maior parte das execuções.
+
+0xE4A8 não é esse caminho. É o meio da função lifted da imagem 219 e um trampolim da imagem 217. O módulo 215 termina em 0x9780 e não contém esse endereço. O laço de `+0x318` não foi encurtado. Nenhum ganho de fps foi medido.
+
+## Medição de 25/11/2026 — amostragem nativa da corrida SpuLight
+
+Amostra só da thread do wid 2, 4367 pontos, com o jogo em cena. A thread estava executando o executável, não parada numa espera. O maior tempo exclusivo foi `fobdata4_spu_func_00007320` (34,5%), depois `fobdata3_spu_func_00006F80` (19,1%) e `jobmod_d128dc7fa99a_e5400_spu_func_00007568` (9,5%). As funções `fobdata*` juntas ficam perto de 70%. `mfc_do_transfer` ficou em 3,5%. A política em 0xA60 aparece em quase toda a pilha porque chama esse núcleo, não porque o store dela seja o custo. A janela dessa amostra travou em 23.130 chamadas de textura e cerca de 8 fps; esse número não é a linha de base.
+
+O núcleo já era AVX2. O custo era a sequência exata de ponto flutuante, cerca de 38 ciclos por fma no banco, contra cerca de 4 na forma nativa com arredondamento para zero. Essa forma coincide com o SPU quando as entradas e o resultado são números normais. Faixa estendida, denormal e o padrão de saturação continuam no caminho exato, inteiro. A mudança vale para todo código lifted compilado com ela, não só para uma função.
+
+O modo do processador fica em arredondamento para zero só durante `spu_run_with_halt`, sem flush-to-zero. O interpretador, quando corre fora dessa janela, continua no caminho exato. As operações de double devolvem o arredondamento para o mais próximo só enquanto executam. A função quente passou de 13.720 para 12.535 instruções; as 264 conversões para double saíram e entraram 51 fma nativas.
+
+Executável medido sem sonda: 25/11/2026 20:46, 211.916.800 bytes, SHA256 `997F3272CE9A76C96F8FFDBCC2F73290E7132A3A25C0E52C8986A6D16263B0AE`. Uma execução, o mesmo roteiro de pad. Cena estável em 84.120 chamadas de textura, 0 miss de shader, 66 janelas de 20 quadros: média 11,30 fps de render, mínimo 10,50, máximo 11,84. Do flip 1030 (43.313 ms) ao 1630 (149.469 ms), 5,65 pedidos de flip/s. A medição anterior sem sonda, no mesmo tipo de cena (cerca de 80 a 87 mil texturas), era cerca de 9,0 fps e cerca de 4,5 pedidos/s. O executável antigo não foi repetido hoje ao lado deste. Esse binário é a forma anterior do caminho, antes do teste de faixa mais curto e antes do shufb na ordem do host. O patch 0034 é a forma medida no dia seguinte.
+
+## Medição de 26/11/2026 — patch 0034
+
+O patch `0034-native-round-toward-zero-singles.patch` aplica-se com `git apply` depois de 0001–0033. Em AVX2, pistas normais de fa, fs, fm, fma, fms e fnms usam uma operação single nativa com o MXCSR em arredondamento para zero. Denormal, infinito, NaN e o máximo finito ficam na trilha exata. FTZ e DAZ permanecem desligados. O modo vale só dentro de `spu_run_with_halt`. O longjmp do caso 2 reaplica os dois bits de arredondamento, porque neste CRT o longjmp recarrega o MXCSR gravado no setjmp. O shufb SSE4.1 não inverte mais o quadword na entrada nem na saída.
+
+O teste diferencial de float, depois do teste de faixa mais curto, deu 446.840.832 pistas e 0 divergências, e 200.000 vetores de double com 0 divergências. O shufb passou em 200.000 vetores aleatórios. O teste de float não foi repetido depois do shufb, que é inteiro.
+
+Uma corrida sem sonda, só com o teste de faixa mais curto: 83.440 chamadas de textura, 0 miss. As primeiras 62 janelas de 20 quadros deram média 12,25 fps de render (mínimo 11,15, máximo 12,99). As cinco seguintes caíram para 9,81–10,76. Do flip 1020 (40.500 ms) ao 1680 (149.859 ms), 6,04 pedidos/s.
+
+Uma corrida sem sonda, já com o shufb na ordem do host: 85.680 texturas, 0 miss. As primeiras 66 janelas deram média 12,29 (mínimo 11,13, máximo 13,03). Do flip 1020 (39.906 ms) ao 1700 (150.656 ms), 6,14 pedidos/s. Não saiu da variação de uma corrida. A função quente ficou com 11.486 instruções, e os vpshufb dela passaram de 454 para 248.
+
+Não houve três corridas pareadas contra a build sem o patch. A imagem não foi conferida. O guest continuou em cerca de 91%. Em 26/11/2026 os patches 0031–0034 entraram na main a pedido. A imagem e o par de três corridas continuam por fazer.

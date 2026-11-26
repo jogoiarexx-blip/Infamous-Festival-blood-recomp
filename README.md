@@ -1,6 +1,6 @@
 # inFAMOUS: Festival of Blood — recompilação para PC
 
-> **Estado da edição NPUA80657 (24/11/2026):** a build Windows reproduz as cinemáticas e chega à cena 3D. O usuário relata cerca de **5 FPS** em partes recentes; esta observação ainda não é um benchmark reproduzível de gameplay. Controle contínuo de Cole, combate, missões e salvamento ainda não foram validados. A build usa ps3recomp e arquivos privados do próprio usuário.
+> **Estado da edição NPUA80657 (26/11/2026):** a build Windows reproduz as cinemáticas e chega à cena 3D. O patch 0034, numa corrida sem sonda, ficou em cerca de 12 fps de render. A imagem não foi conferida e não houve três corridas pareadas. O usuário relatou cerca de 5 FPS em partes recentes. Controle contínuo de Cole, combate, missões e salvamento ainda não foram validados.
 
 Projeto comunitário e não oficial para estudar a viabilidade de uma recompilação estática de **inFAMOUS: Festival of Blood** (PlayStation 3) para PC, com base no ecossistema [ps3recomp](https://github.com/sp00nznet/ps3recomp).
 
@@ -10,12 +10,12 @@ Projeto comunitário e não oficial para estudar a viabilidade de uma recompila�
 
 - **VALIDADO** — A build local de Windows x64 com D3D12 inicia, reproduz a abertura e alcança uma cena 3D. Os testes automatizados do repositório concluíram 47 casos e pularam 2 em 22/11/2026.
 - **PARCIAL** — A cena 3D ainda apresenta pausas e baixa taxa de avanço. O usuário observou aproximadamente 5 FPS em partes recentes. Na build de diagnóstico até o patch 0030, 66 intervalos entre pedidos de flip tiveram mediana de 315,6 ms (3,2 pedidos/s **sob rastreamento**). O contador de renderização mede outra coisa; houve duas submissões D3D12 para cada pedido de flip na janela 1000–1080. Nenhuma dessas medidas comprova 5 FPS sustentados de gameplay.
-- **EM INTEGRAÇÃO** — As PRs #24–#26 corrigem o produtor LFQueue, a inicialização de grupo SPU com slot disperso e a entrega real de eventos à thread SPU. A build Windows limpa e o CI da série até o patch 0030 passaram; a execução alcançou a cena 3D. O patch 0031 de AVX2/FMA permanece separado até validar ganho de desempenho e compatibilidade com CPUs sem essas instruções.
+- **NA MAIN** — As correções até o patch 0034 estão na main. O 0031 liga AVX2/FMA só quando o compilador aceita. Não houve medição numa CPU sem essas instruções. O 0034 não teve a imagem conferida nem três corridas pareadas.
 - **PENDENTE** — Fluidez e estabilidade no 3D, vidro da garrafa, materiais translúcidos, controle de Cole, gameplay, combate, missões e save/load. Não há medição atual que comprove 30 FPS sustentados em gameplay.
 
 Os logs e executáveis usados nesses testes ficam apenas na máquina de desenvolvimento. O repositório contém ferramentas, testes e patches para aplicar ao SDK ps3recomp. Para reproduzir o teste Windows, é necessário compilar o SDK e o port com CMake, Ninja, Visual Studio Build Tools e Direct3D 12, usando uma cópia legal do jogo em `private/game/`. Consulte [SETUP](docs/SETUP.md) e os [patches do runtime](patches/ps3recomp/) antes de compilar. REA e Ghidra foram usados localmente para inspecionar rotinas PPU, e são opcionais para executar a build.
 
-As correções de runtime até o patch 0030 estão em integração. A PR #15 permanece aberta para acompanhamento da série e do patch 0031. Consulte [o relatório de desempenho](CODEX_DESEMPENHO_RECOMP.md) para as medições, seus limites e as pendências antes de considerar o jogo jogável.
+As correções de runtime até o patch 0034 estão na main. Os outros pedidos abertos, de revisão e de rascunho, não foram fundidos. Consulte [o relatório de desempenho](CODEX_DESEMPENHO_RECOMP.md) para as medições, seus limites e as pendências antes de considerar o jogo jogável.
 
 ## O que já existe
 
@@ -29,6 +29,7 @@ As correções de runtime até o patch 0030 estão em integração. A PR #15 per
 
 - O código PPU e SPU foi recompilado localmente a partir dos arquivos do jogo.
 - As correções de sincronização, vídeo e diagnóstico do SPU estão nos [patches do ps3recomp](patches/ps3recomp/).
+- O patch 0034 liga, em AVX2, a soma, a multiplicação e o FMA de precisão simples com arredondamento para zero, e tira as inversões extras do shufb em SSE4.1. Aplica-se depois de 0001–0033. A medição e o que ainda não foi conferido estão em [CODEX_DESEMPENHO_RECOMP.md](CODEX_DESEMPENHO_RECOMP.md).
 - O [rastreio do vídeo NPUA80657](docs/BINK-VIDEO-NPUA80657.md) documenta a transição após o splash e como aplicar os patches.
 
 ## Começar (Windows, Python 3.10+)

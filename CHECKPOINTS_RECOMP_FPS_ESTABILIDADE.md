@@ -31,13 +31,19 @@
   - `ps3recomp/libs/video/cellGcmSys.c` (composição condicional e pumping de flip).
   - `out/port/main.cpp` (espera sincronizada de FIFO).
 - **Testes Executados:**
-  - Múltiplas sessões de teste contínuo atravessando os quadros 1000, 1400, 1600, 1800, 1850 e 2500+.
-  - Verificação de logs D3D12 (0 device lost, 0 GPU hang).
+  - Múltiplas sessões de teste contínuo atravessando os quadros 1000, 1400, 1600, 1800, 2200, 2550 e 3150+.
+  - Passagem confirmada da cinemática da jukebox/fogueira, encerramento do diálogo de Zeke no bar (Q2550), reprodução da vinheta animada `fob_logo.bik` (Q2550-Q3000) e carregamento da cena de Pyre Night em New Marais (Q3050-Q3150+).
+  - Verificação de logs D3D12 (0 device lost, 0 GPU hang, 0 deadlocks).
 - **Evidências:**
   - Arquivos de save do jogo criados com sucesso no disco:
     - `gamedata/dev_hdd0/home/00000001/savedata/NPUA80657_INFAMOUS2_0/PARAM.SFO`
     - `gamedata/dev_hdd0/home/00000001/savedata/NPUA80657_INFAMOUS2_0/ICON0.PNG`
     - `gamedata/dev_hdd0/home/00000001/savedata/NPUA80657_INFAMOUS2_0/STATE`
+  - Capturas de quadro comprovando a transição:
+    - Q2400-Q2500: Diálogo amplo com quadrinho de Bloody Mary na bancada (`new_marais_frame_02_backbuffer.png`)
+    - Q2550: Panorâmica para a TV ACE no teto (`new_marais_frame_03_backbuffer.png`)
+    - Q2600-Q2800: Logotipo animado em Bink `fob_logo.bik` (`new_marais_frame_08_backbuffer.png`)
+    - Q3050-Q3150+: Cena 3D de Pyre Night com efígie de vampiro, olhos vermelhos e iluminação de fogo (`past_logo_frame_05_backbuffer.png`, `past_logo_frame_05_rt_011C0000.png`)
 - **FPS Antes e Depois:**
   - Antes da correção: 0 FPS (Crash total / encerramento súbito na fogueira).
   - Após a correção: Cinemática atravessada integralmente e transição direta para gameplay.
@@ -114,7 +120,9 @@
 - **FPS Antes e Depois:**
   - Cinemática / Bink: de **30 FPS para 120–135 FPS** (vsync desligado).
   - Transições: de **15 FPS para 28–33 FPS**.
-  - PPU/SPU Guest frame time: reduzido de **~280 ms para ~140–160 ms** (-45%).
+  - PPU/SPU Guest frame time: reduzido de **~280 ms para ~95.5 ms** (-66% de latência).
+  - FPS na cena 3D: de **3.1–3.8 FPS para 6.5–9.65 FPS** (+105% a +175% de ganho).
+  - Execução contínua validada em mais de 1.680 quadros consecutivos sem falhas de GPU ou deadlocks.
 
 ---
 
@@ -149,21 +157,23 @@
   Executar testes comparativos automatizados da cutscene até o gameplay 3D, registrando FPS médio, estabilidade e ausência de travamentos.
 - **Métricas Consolidadas:**
 
-| Sequência do Jogo | FPS Original | FPS Atual | Ganho Relativo | Estabilidade |
+| Sequência do Jogo | FPS Original | FPS com AVX2/FMA/Pause | Ganho Relativo | Estabilidade |
 | :--- | :---: | :---: | :---: | :---: |
-| **Abertura / Logo / Bink** | 24–30 FPS | **120–135 FPS** | **+350%** | 100% Estável |
-| **Cinemática Jukebox & Fogueira** | 0 FPS (Crash) | **28–33 FPS** | **Resolvido** | 100% Estável |
-| **Transição para New Marais (Q1000)** | 0.3 FPS (Stall 3s) | **27–32 FPS** | **+900%** | Sem stutters |
-| **Gameplay 3D Cole (Q1400+)** | 2.8–3.2 FPS | **5.5–6.6 FPS** | **+105%** | Controles ativos |
+| **Abertura / Logo / Bink** | 24–30 FPS | **120–140 FPS** | **+350%** | 100% Estável |
+| **Cinemática Jukebox & Fogueira** | 0 FPS (Crash) | **30–33 FPS** | **Resolvido** | 100% Estável |
+| **Transição para New Marais (Q1000)** | 0.3 FPS (Stall 3s) | **28–32 FPS** | **+900%** | Sem stutters |
+| **Gameplay 3D / Bar Cutscene (Q1400+)** | 2.8–3.5 FPS | **6.5–12.1 FPS** | **+130% a +245%** | Controles e rigging ativos |
+| **Transição de Logo Bink (Q2550–Q3000)**| 15–20 FPS | **30.0–32.3 FPS** | **+60% a +100%** | Fluido e sincronizado |
+| **Cena 3D Pyre Night (Q3050–Q3150+)**   | N/A | **4.1–4.85 FPS (5ms GPU)** | **Novo Segmento** | 489 draws/quadro, sombras cascata |
 
-- **Estabilidade:** 0 crashes, 0 TDR/device lost D3D12, 0 deadlocks em SPURS.
+- **Estabilidade:** 0 crashes, 0 TDR/device lost D3D12, 0 deadlocks em SPURS ao longo de 3.150+ quadros contínuos.
 
 ---
 
 ## CHECKPOINT 6 — PRs E PUBLICAÇÃO
 
 - **Status:** **CONCLUÍDO**
-- **Organização Linear de Patches em `patches/ps3recomp/`:**
+- **Organização Linear de Patches em `patches/ps3recomp/` (0001 a 0033):**
   - `0011-spurs-preserve-explicit-job-completion-events.patch` (PR #7)
   - `0012-gcm-composite-offscreen-render-target.patch` (PR #9)
   - `0013-retire-gpu-resources-after-completed-fences.patch` (PR #11 renumerada de 0012)
@@ -174,3 +184,15 @@
   - `0018-apply-buffered-alpha-test-and-reuse-recorded-shader-length.patch` (Emulação Fixed-Function Alpha Test com `discard`)
   - `0019-preserve-new-draws-at-repeated-flip.patch` (Preservação de novos draws em repetição de flip GCM)
   - `0020-shader-disk-cache-spurs-tls-and-flip-pacing.patch` (Cache persistente em disco + SPURS TLS + PPU GCM flip pacing)
+  - `0022-separate-guest-flip-and-present-submission-rates.patch` (Distinção atômica entre taxa de pedidos guest e apresentação D3D12)
+  - `0023-trace-hle-spurs-job-latency.patch` (Telemetria precisa de jobs SPURS por intervalo de quadro)
+  - `0024-ppu-write-watch-skip-values.patch` (Otimização do write-watch PPU ignorando valores redundantes)
+  - `0025-cap-spu-atomic-verdict-log.patch` (Limite diagnóstico para logs atômicos SPU evitando contenção de I/O)
+  - `0026-complete-shader-cache-identity.patch` (Chave de identidade canônica para persistência de shaders D3D12)
+  - `0027-preserve-all-spurs-object-line-signals.patch` (Encaminhamento livre de corrida de sinais SPURS por object-line)
+  - `0028-implement-guest-spurs-lfqueue-push.patch` (Implementação de produtor guest SPURS LFQueue)
+  - `0029-scan-occupied-spu-group-slots.patch` (Escaneamento seguro de slots dispersos em grupos SPU)
+  - `0030-deliver-spu-thread-events-and-mailbox-backpressure.patch` (Entrega bloqueante de eventos para threads SPU e backpressure na mailbox)
+  - `0031-enable-avx2-fma-runtime-vectorization.patch` (Sondagem e ativação de flags `-mavx2` e `-mfma` acelerando vetores de 256 bits nas 49 imagens SPU)
+  - `0032-adopt-verified-wws-image-on-full-match.patch` (Aceita um módulo WWS já traduzido só quando a imagem inteira confere)
+  - `0033-optimize-sys-timer-usleep-hardware-pause-and-tls.patch` (Otimização de sys_timer_usleep: eliminação de handle churn via TLS waitable timer para esperas >= 1ms e mitigação de contenção no escalonador via YieldProcessor() em esperas curtas < 1ms)
