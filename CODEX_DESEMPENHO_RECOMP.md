@@ -127,4 +127,24 @@ Uma corrida sem sonda, só com o teste de faixa mais curto: 83.440 chamadas de t
 
 Uma corrida sem sonda, já com o shufb na ordem do host: 85.680 texturas, 0 miss. As primeiras 66 janelas deram média 12,29 (mínimo 11,13, máximo 13,03). Do flip 1020 (39.906 ms) ao 1700 (150.656 ms), 6,14 pedidos/s. Não saiu da variação de uma corrida. A função quente ficou com 11.486 instruções, e os vpshufb dela passaram de 454 para 248.
 
-Não houve três corridas pareadas contra a build sem o patch. A imagem não foi conferida. O guest continuou em cerca de 91%. Em 26/11/2026 os patches 0031–0034 entraram na main a pedido. A imagem e o par de três corridas continuam por fazer.
+Não houve três corridas pareadas contra a build sem o patch. O guest continuou em cerca de 91%. Em 26/11/2026 os patches 0031–0034 entraram na main a pedido. O par de três corridas continua por fazer.
+
+O executável dessa corrida de 12,29 fps está guardado só na máquina de desenvolvimento: 211.301.376 bytes, 26/11/2026 07:38, SHA-256 `1E256A50DD78365C99BE59DCBD28F894C0A801AC4F0D6004E99E03C09CA79C9F`. O repositório não leva o binário.
+
+## O que foi olhado depois do 0034 e não virou patch
+
+O teste `plain0` (número normal ou zero) foi reescrito na árvore local do SDK como um intervalo sem sinal. Contra a cópia dos fontes do executável de 12,29, essa função é a única diferença em `spu_helpers.h`. Os 2³² padrões bateram com o teste antigo. No laço isolado de `fobdata4`, a razão de tempo do novo sobre o antigo ficou em 0,98 e 0,92, e o topo da variação passou de 1,0 nas duas amostras. O executável de 12,29 não foi reconstruído. Não entrou na série.
+
+Reusar a máscara desse teste dentro do laço quente também bateu nos registradores e na memória local, e trocou comparação por cópia. O contador de ciclos do laço isolado ficou na mesma faixa, cerca de 2% entre execuções. O passe não ficou no gerador.
+
+Um simulador de agendamento, numa volta do laço quente, estimou 3383 ciclos, com o aperto nas portas vetoriais. O corpo do laço tem 63 KB e a cache de instruções deste processador tem 32 KB. O simulador não conta essa falta. Não é medida de quadro.
+
+## Olhada na imagem em 26/11/2026
+
+Nenhuma dessas aberturas é a corrida de 12,29 fps (85.680 texturas). A garrafa de vidro, o cabelo, as partículas e a sombra dessa corrida continuam sem conferência. Não houve comparação com o RPCS3.
+
+Numa abertura do mesmo executável, a câmera parou na sala do piano. Duas capturas, com alguns segundos de intervalo, saíram iguais. O piano, o banco, a parede e o quadro estavam coerentes. Não havia Cole, cabelo, garrafa, partícula nem transparência nesse quadro. As texturas estabilizaram em 23.130 e o título da janela ficou perto de 14 fps. Esse 14 não substitui os 12,29.
+
+Noutra abertura, sem os botões tardios do roteiro, o logo ainda passava no flip 950 (28,5 s). O 3D entrou em seguida: o workload `Wws_Job/Shadow 0` foi criado, as texturas foram de cerca de 21 mil a cerca de 85 mil, e as janelas ficaram entre cerca de 4 e 12 fps, com o guest entre cerca de 87% e 97%. No flip 1260 (141 s) uma janela marcou 2,25 fps e 64.646 texturas. No flip 1310 (161 s) a cena caiu para 140 texturas. Por volta do flip 1420 as threads do Bink (`bar_tv.bik` e `tv_fob_feed_2x2.bik`) encerraram com status 1. Daí até o flip 8980 o log ficou perto de 31 fps, 1.120 texturas, 9 a 160 desenhos e guest em 99%. A imagem nessa espera era uma tela preta com um traço vermelho embaixo. O analógico e um CROSS não trocaram o quadro. Nas mãos do Zeke, num quadro anterior desse enquadramento, não havia copo. A garrafa não entrou.
+
+O gravador ETW do Windows não armou: o código `0xc5585011` pede um processo elevado. Os contadores de hardware não foram lidos.

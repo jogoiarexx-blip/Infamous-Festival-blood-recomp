@@ -1,6 +1,6 @@
 # inFAMOUS: Festival of Blood — recompilação para PC
 
-> **Estado da edição NPUA80657 (26/11/2026):** a build Windows reproduz as cinemáticas e chega à cena 3D. O patch 0034, numa corrida sem sonda, ficou em cerca de 12 fps de render. A imagem não foi conferida e não houve três corridas pareadas. O usuário relatou cerca de 5 FPS em partes recentes. Controle contínuo de Cole, combate, missões e salvamento ainda não foram validados.
+> **Estado da edição NPUA80657 (26/11/2026):** a build Windows reproduz as cinemáticas e chega à cena 3D. O patch 0034, numa corrida sem sonda, ficou em cerca de 12 fps de render. Essa corrida não teve a imagem conferida e não houve três corridas pareadas. Aberturas seguintes do mesmo executável mostraram a sala do piano e, noutra, o bar seguido de uma tela preta. O usuário relatou cerca de 5 FPS em partes recentes. Controle contínuo de Cole, combate, missões e salvamento ainda não foram validados.
 
 Projeto comunitário e não oficial para estudar a viabilidade de uma recompilação estática de **inFAMOUS: Festival of Blood** (PlayStation 3) para PC, com base no ecossistema [ps3recomp](https://github.com/sp00nznet/ps3recomp).
 
@@ -10,7 +10,7 @@ Projeto comunitário e não oficial para estudar a viabilidade de uma recompila�
 
 - **VALIDADO** — A build local de Windows x64 com D3D12 inicia, reproduz a abertura e alcança uma cena 3D. Os testes automatizados do repositório concluíram 47 casos e pularam 2 em 22/11/2026.
 - **PARCIAL** — A cena 3D ainda apresenta pausas e baixa taxa de avanço. O usuário observou aproximadamente 5 FPS em partes recentes. Na build de diagnóstico até o patch 0030, 66 intervalos entre pedidos de flip tiveram mediana de 315,6 ms (3,2 pedidos/s **sob rastreamento**). O contador de renderização mede outra coisa; houve duas submissões D3D12 para cada pedido de flip na janela 1000–1080. Nenhuma dessas medidas comprova 5 FPS sustentados de gameplay.
-- **NA MAIN** — As correções até o patch 0034 estão na main. O 0031 liga AVX2/FMA só quando o compilador aceita. Não houve medição numa CPU sem essas instruções. O 0034 não teve a imagem conferida nem três corridas pareadas.
+- **NA MAIN** — As correções até o patch 0034 estão na main. O 0031 liga AVX2/FMA só quando o compilador aceita. Não houve medição numa CPU sem essas instruções. A corrida de 12 fps do 0034 não teve a imagem conferida nem três corridas pareadas. As aberturas posteriores estão no relatório de desempenho.
 - **PENDENTE** — Fluidez e estabilidade no 3D, vidro da garrafa, materiais translúcidos, controle de Cole, gameplay, combate, missões e save/load. Não há medição atual que comprove 30 FPS sustentados em gameplay.
 
 Os logs e executáveis usados nesses testes ficam apenas na máquina de desenvolvimento. O repositório contém ferramentas, testes e patches para aplicar ao SDK ps3recomp. Para reproduzir o teste Windows, é necessário compilar o SDK e o port com CMake, Ninja, Visual Studio Build Tools e Direct3D 12, usando uma cópia legal do jogo em `private/game/`. Consulte [SETUP](docs/SETUP.md) e os [patches do runtime](patches/ps3recomp/) antes de compilar. REA e Ghidra foram usados localmente para inspecionar rotinas PPU, e são opcionais para executar a build.
