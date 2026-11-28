@@ -1,6 +1,6 @@
 # inFAMOUS: Festival of Blood — recompilação para PC
 
-> **Estado da edição NPUA80657 (26/11/2026):** a build Windows reproduz as cinemáticas e chega à cena 3D. O patch 0034, numa corrida sem sonda, ficou em cerca de 12 fps de render. Essa corrida não teve a imagem conferida e não houve três corridas pareadas. Aberturas seguintes do mesmo executável mostraram a sala do piano e, noutra, o bar seguido de uma tela preta. O usuário relatou cerca de 5 FPS em partes recentes. Controle contínuo de Cole, combate, missões e salvamento ainda não foram validados.
+> **Estado da edição NPUA80657 (28/11/2026):** a build Windows reproduz as cinemáticas e chega à cena 3D. O patch 0034, numa corrida sem sonda, ficou em cerca de 12 fps de render. Essa corrida não teve a imagem conferida e não houve três corridas pareadas. Em 28/11/2026 o verde da cena foi localizado no terceiro alvo da geometria; o primeiro alvo tinha cor normal. Isso não é correção e não foi comparado ao RPCS3. Controle contínuo de Cole, combate, missões e salvamento ainda não foram validados.
 
 Projeto comunitário e não oficial para estudar a viabilidade de uma recompilação estática de **inFAMOUS: Festival of Blood** (PlayStation 3) para PC, com base no ecossistema [ps3recomp](https://github.com/sp00nznet/ps3recomp).
 

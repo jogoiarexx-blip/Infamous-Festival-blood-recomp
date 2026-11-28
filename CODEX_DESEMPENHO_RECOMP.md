@@ -148,3 +148,13 @@ Numa abertura do mesmo executável, a câmera parou na sala do piano. Duas captu
 Noutra abertura, sem os botões tardios do roteiro, o logo ainda passava no flip 950 (28,5 s). O 3D entrou em seguida: o workload `Wws_Job/Shadow 0` foi criado, as texturas foram de cerca de 21 mil a cerca de 85 mil, e as janelas ficaram entre cerca de 4 e 12 fps, com o guest entre cerca de 87% e 97%. No flip 1260 (141 s) uma janela marcou 2,25 fps e 64.646 texturas. No flip 1310 (161 s) a cena caiu para 140 texturas. Por volta do flip 1420 as threads do Bink (`bar_tv.bik` e `tv_fob_feed_2x2.bik`) encerraram com status 1. Daí até o flip 8980 o log ficou perto de 31 fps, 1.120 texturas, 9 a 160 desenhos e guest em 99%. A imagem nessa espera era uma tela preta com um traço vermelho embaixo. O analógico e um CROSS não trocaram o quadro. Nas mãos do Zeke, num quadro anterior desse enquadramento, não havia copo. A garrafa não entrou.
 
 O gravador ETW do Windows não armou: o código `0xc5585011` pede um processo elevado. Os contadores de hardware não foram lidos.
+
+## Olhada no verde em 28/11/2026
+
+Numa build de diagnóstico, o quadro 1000 da cena 3D termina com o verde no máximo e o azul em zero. A unidade 6 (`0x00E3C000`, 320×180, formato linear `0xA5`, remap `0xAAE4`) já está assim antes do shader final. O formato não troca os canais.
+
+O último desenho nessa unidade soma um buffer de 160×90 que termina preto, então essa soma não pinta o quadro. O verde entra antes, por cópia de `0x00734000`. Esse endereço, e o par `0x003B0000` no quadro alternado, é o terceiro alvo da passagem de geometria. No quadro 976 o primeiro alvo, `0x00AB8000` em 1280×720, tem média 89, 86, 80. O terceiro alvo tem média 1, 224, 0. No quadro 974 o par `0x003B0000` tem média 1, 223, 0.
+
+No shader decompilado, esse terceiro alvo sai de um registrador em que o vermelho não é escrito e o verde é um único valor de vértice (`tc0.w`). A memória do jogo, no instante em que o recurso foi criado, estava preta nas amostras lidas. O verde é escrito pela GPU depois.
+
+Não houve comparação com o RPCS3. Não houve teste zerando a unidade 6. Nada disso entrou como patch. As capturas ficaram só na máquina de desenvolvimento.
